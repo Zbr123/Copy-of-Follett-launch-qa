@@ -576,6 +576,16 @@ async function testRentalCollateral(page, store, emit) {
   emit({ screenshot: screenshotUrl(checkoutShot), label: 'Checkout page' });
 
   // Check for "recurring subtotal" text on checkout page
+  emit({ step: 'Waiting for checkout content to fully render...' });
+  // Wait up to 5s for the rental login message to appear
+  try {
+    await page.waitForFunction(
+      () => (document.body.innerText || '').includes('You must be logged in'),
+      { timeout: 5000 }
+    );
+  } catch (_) {
+    // Continue anyway — we'll check below
+  }
   emit({ step: 'Checking for "recurring subtotal" on checkout...' });
   const pageText = await page.textContent('body').catch(() => '');
   const upperPageText = pageText.toUpperCase();
