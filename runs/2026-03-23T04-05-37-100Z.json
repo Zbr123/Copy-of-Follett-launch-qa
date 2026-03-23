@@ -1,0 +1,60 @@
+{
+  "id": "2026-03-23T04-05-37-100Z",
+  "startedAt": "2026-03-23T04:05:37.100Z",
+  "stores": [
+    "https://bkstr-0125.myshopify.com/?_cd=b8c7f0c00dc3a23607553f655579fbd388bee71c48de30aa80ebb5fa88bcd022&_uid=105246490843&preview_theme_id=159992578267&preview_token=r3cail92m7etf0x0pszvaxukjfvwukai"
+  ],
+  "tests": [
+    "storefront-loads",
+    "cart-add",
+    "digital-delivery-fee"
+  ],
+  "concurrency": 5,
+  "results": [
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_cd=b8c7f0c00dc3a23607553f655579fbd388bee71c48de30aa80ebb5fa88bcd022&_uid=105246490843&preview_theme_id=159992578267&preview_token=r3cail92m7etf0x0pszvaxukjfvwukai",
+      "testId": "storefront-login",
+      "passed": true,
+      "message": "Store loaded without password gate",
+      "checks": [],
+      "timestamp": "2026-03-23T04:05:39.104Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_cd=b8c7f0c00dc3a23607553f655579fbd388bee71c48de30aa80ebb5fa88bcd022&_uid=105246490843&preview_theme_id=159992578267&preview_token=r3cail92m7etf0x0pszvaxukjfvwukai",
+      "testId": "storefront-loads",
+      "passed": true,
+      "message": "Storefront loaded — title: \"Blackhawk Bookstore\"",
+      "checks": [],
+      "timestamp": "2026-03-23T04:05:39.549Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_cd=b8c7f0c00dc3a23607553f655579fbd388bee71c48de30aa80ebb5fa88bcd022&_uid=105246490843&preview_theme_id=159992578267&preview_token=r3cail92m7etf0x0pszvaxukjfvwukai",
+      "testId": "cart-add",
+      "passed": true,
+      "message": "Add to cart successful. Cart has 1 item(s).",
+      "checks": [],
+      "timestamp": "2026-03-23T04:05:47.498Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_cd=b8c7f0c00dc3a23607553f655579fbd388bee71c48de30aa80ebb5fa88bcd022&_uid=105246490843&preview_theme_id=159992578267&preview_token=r3cail92m7etf0x0pszvaxukjfvwukai",
+      "testId": "digital-delivery-fee",
+      "passed": true,
+      "message": "Digital delivery flow complete. Cart: 2 items. Digital Delivery Fee: $5.99. Both items confirmed on checkout.",
+      "checks": [
+        {
+          "name": "Digital Delivery Fee",
+          "passed": true,
+          "detail": "Found on checkout page"
+        },
+        {
+          "name": "Product on Checkout",
+          "passed": true,
+          "detail": "\"Shelly Cashman Series Microsoft Office 365 & Publisher 2016: Introductory, Loose-leaf Version\" found on checkout"
+        }
+      ],
+      "timestamp": "2026-03-23T04:06:43.901Z"
+    }
+  ],
+  "status": "complete",
+  "completedAt": "2026-03-23T04:06:43.943Z"
+}

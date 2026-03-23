@@ -612,6 +612,210 @@
       border-radius: 12px;
     }
 
+    /* ── Validate Button ── */
+    .btn-validate {
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 12px;
+      color: #f5f5f7;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 14px 28px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-validate:hover { border-color: #fff; }
+    .btn-validate:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .validation-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 14px;
+      font-size: 13px;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    .validation-row .v-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .validation-row .v-dot.ok { background: #34c759; }
+    .validation-row .v-dot.warn { background: #ff9f0a; }
+    .validation-row .v-dot.err { background: #ff3b30; }
+    .validation-row .v-store { font-weight: 600; flex: 1; }
+    .validation-row .v-status { color: #86868b; font-size: 12px; }
+
+    /* ── Nav Tabs ── */
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+    }
+    .nav-tab {
+      background: none;
+      border: none;
+      color: #86868b;
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .nav-tab:hover { color: #f5f5f7; background: #1a1a1a; }
+    .nav-tab.active { color: #fff; background: #222; }
+
+    /* ── Dashboard ── */
+    .dash-section { margin-bottom: 32px; }
+    .dash-section-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #86868b;
+      margin-bottom: 16px;
+    }
+    .dash-empty {
+      color: #555;
+      font-size: 14px;
+      padding: 24px;
+      text-align: center;
+      border: 1px solid #222;
+      border-radius: 12px;
+    }
+
+    .run-history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .run-card {
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .run-card:hover { border-color: #444; }
+    .run-card.selected { border-color: #fff; }
+    .run-card .run-date { font-size: 13px; font-weight: 600; flex: 1; }
+    .run-card .run-stats { display: flex; gap: 12px; font-size: 12px; }
+    .run-card .run-stat { display: flex; align-items: center; gap: 4px; }
+    .run-card .run-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .run-card .run-dot.green { background: #34c759; }
+    .run-card .run-dot.red { background: #ff3b30; }
+    .run-card .run-status {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .run-card .run-status.complete { background: #1a3a1a; color: #34c759; }
+    .run-card .run-status.running { background: #3a2a0a; color: #ff9f0a; }
+    .run-card .run-status.error { background: #3a1a1a; color: #ff3b30; }
+    .run-card .btn-diff {
+      background: #222;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #86868b;
+      font-size: 11px;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .run-card .btn-diff:hover { border-color: #fff; color: #fff; }
+
+    /* Dashboard Filters */
+    .dash-filters {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+    .dash-filter {
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 6px;
+      color: #86868b;
+      font-family: 'Inter', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .dash-filter:hover { border-color: #444; color: #fff; }
+    .dash-filter.active { background: #fff; color: #000; border-color: #fff; }
+    .dash-search {
+      margin-left: auto;
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 6px;
+      color: #f5f5f7;
+      font-family: 'Inter', sans-serif;
+      font-size: 12px;
+      padding: 6px 14px;
+      width: 220px;
+    }
+    .dash-search::placeholder { color: #555; }
+    .dash-search:focus { outline: none; border-color: #fff; }
+
+    /* Dashboard Table */
+    .dash-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .dash-table th {
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #86868b;
+      border-bottom: 1px solid #333;
+    }
+    .dash-table td {
+      padding: 12px 14px;
+      font-size: 13px;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    .dash-table tr:hover td { background: #0a0a0a; }
+    .dash-table .store-name { font-weight: 600; }
+    .dash-table .pass-count { color: #34c759; font-weight: 600; }
+    .dash-table .fail-count { color: #ff3b30; font-weight: 600; }
+    .dash-table .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+    .dash-table .status-dot.pass { background: #34c759; }
+    .dash-table .status-dot.fail { background: #ff3b30; }
+
+    /* Diff */
+    .diff-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .diff-table th {
+      text-align: left; padding: 8px 14px; font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px; color: #86868b;
+      border-bottom: 1px solid #333;
+    }
+    .diff-table td { padding: 10px 14px; font-size: 12px; border-bottom: 1px solid #1a1a1a; }
+    .diff-fixed { color: #34c759; }
+    .diff-regressed { color: #ff3b30; }
+    .diff-summary {
+      display: flex; gap: 24px; margin-bottom: 16px;
+      font-size: 13px;
+    }
+    .diff-summary .diff-stat { display: flex; align-items: center; gap: 6px; }
+
     /* ── Scrollbar ── */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -626,10 +830,14 @@
       <div class="divider"></div>
       <span>Follett Launch QA</span>
     </div>
+    <div class="nav-tabs">
+      <button class="nav-tab active" onclick="switchView('runner')">Run Tests</button>
+      <button class="nav-tab" onclick="switchView('dashboard')">Dashboard</button>
+    </div>
     <div class="nav-right" id="clockDisplay"></div>
   </nav>
 
-  <div class="container">
+  <div class="container" id="runnerView">
 
     <!-- ── Step 1: Stores ── -->
     <div class="step-section">
@@ -662,13 +870,24 @@
     </div>
 
     <!-- ── Run ── -->
-    <div class="run-section">
+    <div class="run-section" style="display:flex;gap:12px;align-items:center;">
       <button class="btn-run" id="runBtn" onclick="runTests()">
         <span class="spinner"></span>
         <span class="run-label">Run All Tests</span>
         <span class="running-label">Running...</span>
       </button>
+      <button class="btn-validate" id="validateBtn" onclick="validateStores()">Validate Stores</button>
+      <button class="btn-validate" onclick="toggleSchedule()">Schedule Run</button>
     </div>
+    <div id="schedulePanel" style="display:none;margin-top:12px;padding:16px;background:#111;border:1px solid #222;border-radius:12px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:12px;">Schedule a future run</div>
+      <div style="display:flex;gap:12px;align-items:center;">
+        <input type="datetime-local" id="scheduleTime" style="background:#000;border:1px solid #333;border-radius:8px;color:#fff;padding:8px 12px;font-family:'Inter',sans-serif;font-size:13px;" />
+        <button class="btn-validate" onclick="scheduleRun()">Schedule</button>
+      </div>
+      <div id="scheduledList" style="margin-top:12px;"></div>
+    </div>
+    <div id="validationResults" style="display:none;margin-top:12px;"></div>
 
     <!-- ── Results ── -->
     <div class="results-wrapper" id="resultsWrapper">
@@ -704,6 +923,54 @@
       </div>
 
       <div id="results"></div>
+    </div>
+  </div>
+
+  <!-- Dashboard View -->
+  <div class="container" id="dashboardView" style="display:none">
+    <div class="step-section">
+      <div class="step-header">
+        <h2>Dashboard. <span>View run history and compare results.</span></h2>
+      </div>
+
+      <!-- Run History -->
+      <div class="dash-section">
+        <div class="dash-section-title">Run History</div>
+        <div id="runHistoryList" class="run-history-list">
+          <div class="dash-empty">No runs yet. Run some tests first.</div>
+        </div>
+      </div>
+
+      <!-- Run Detail / Store Table -->
+      <div class="dash-section" id="runDetailSection" style="display:none">
+        <div class="dash-section-title" id="runDetailTitle">Run Details</div>
+
+        <!-- Filters -->
+        <div class="dash-filters">
+          <button class="dash-filter active" onclick="filterDash('all')">All</button>
+          <button class="dash-filter" onclick="filterDash('pass')">Passed</button>
+          <button class="dash-filter" onclick="filterDash('fail')">Failed</button>
+          <input type="text" class="dash-search" id="dashSearch" placeholder="Search stores..." oninput="filterDash()" />
+        </div>
+
+        <table class="dash-table" id="dashTable">
+          <thead>
+            <tr>
+              <th>Store</th>
+              <th>Passed</th>
+              <th>Failed</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="dashTableBody"></tbody>
+        </table>
+      </div>
+
+      <!-- Diff Section -->
+      <div class="dash-section" id="diffSection" style="display:none">
+        <div class="dash-section-title">Run Comparison</div>
+        <div id="diffContent"></div>
+      </div>
     </div>
   </div>
 
@@ -1300,6 +1567,299 @@
     }
     updateClock();
     setInterval(updateClock, 30000);
+
+    /* ── Scheduling ── */
+    function toggleSchedule() {
+      const panel = document.getElementById('schedulePanel');
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      if (panel.style.display === 'block') loadScheduledRuns();
+    }
+
+    async function scheduleRun() {
+      const stores = getStores();
+      if (!stores.length) return alert('Add at least one store');
+      const tests = Array.from(selectedTests);
+      if (!tests.length) return alert('Select at least one test');
+      const time = document.getElementById('scheduleTime').value;
+      if (!time) return alert('Pick a time');
+
+      try {
+        const resp = await fetch('/api/schedule-run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stores, tests, scheduledFor: new Date(time).toISOString() }),
+        });
+        const result = await resp.json();
+        if (result.error) return alert(result.error);
+        alert(`Run scheduled for ${new Date(result.scheduledFor).toLocaleString()}`);
+        loadScheduledRuns();
+      } catch (err) {
+        alert('Scheduling failed: ' + err.message);
+      }
+    }
+
+    async function loadScheduledRuns() {
+      try {
+        const resp = await fetch('/api/scheduled-runs');
+        const runs = await resp.json();
+        const el = document.getElementById('scheduledList');
+        if (!runs.length) { el.innerHTML = ''; return; }
+        el.innerHTML = '<div style="font-size:11px;color:#86868b;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Scheduled Runs</div>' +
+          runs.map(r => `
+            <div class="validation-row">
+              <div class="v-dot ${r.status === 'complete' ? 'ok' : r.status === 'running' ? 'warn' : r.status === 'error' ? 'err' : 'ok'}"></div>
+              <span class="v-store">${new Date(r.scheduledFor).toLocaleString()}</span>
+              <span class="v-status">${r.status}${r.runId ? ` — Run: ${r.runId.slice(0,16)}` : ''}</span>
+              ${r.status === 'scheduled' ? `<button onclick="cancelSchedule('${r.id}')" style="background:none;border:1px solid #333;border-radius:4px;color:#ff3b30;font-size:11px;padding:2px 8px;cursor:pointer;">Cancel</button>` : ''}
+            </div>
+          `).join('');
+      } catch (_) {}
+    }
+
+    async function downloadRunReport(runId) {
+      const btn = event.target;
+      const origText = btn.textContent;
+      btn.textContent = 'Generating...';
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/api/runs/${runId}/pdf`);
+        if (!resp.ok) throw new Error('PDF generation failed');
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Follett-QA-Report-${runId.slice(0, 10)}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Report generation failed: ' + err.message);
+      }
+      btn.textContent = origText;
+      btn.disabled = false;
+    }
+
+    async function cancelSchedule(id) {
+      await fetch(`/api/scheduled-runs/${id}`, { method: 'DELETE' });
+      loadScheduledRuns();
+    }
+
+    /* ── Store Validation ── */
+    async function validateStores() {
+      const stores = getStores();
+      if (!stores.length) return alert('Add at least one store');
+
+      const btn = document.getElementById('validateBtn');
+      btn.textContent = 'Validating...';
+      btn.disabled = true;
+
+      const container = document.getElementById('validationResults');
+      container.style.display = 'block';
+      container.innerHTML = '<div style="color:#86868b;font-size:13px;padding:12px;">Checking store connectivity and passwords...</div>';
+
+      try {
+        const resp = await fetch('/api/validate-stores', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stores }),
+        });
+        const results = await resp.json();
+
+        let html = '';
+        let allOk = true;
+        results.forEach(r => {
+          const hostname = truncateUrl(r.store);
+          let status, dotClass;
+          if (!r.reachable) {
+            status = 'Unreachable';
+            dotClass = 'err';
+            allOk = false;
+          } else if (r.passwordWorks === false) {
+            status = 'Reachable — wrong password';
+            dotClass = 'warn';
+            allOk = false;
+          } else if (r.passwordWorks === true) {
+            status = 'Ready';
+            dotClass = 'ok';
+          } else {
+            status = 'Reachable — password not tested';
+            dotClass = 'warn';
+          }
+          html += `
+            <div class="validation-row">
+              <div class="v-dot ${dotClass}"></div>
+              <span class="v-store">${hostname}</span>
+              <span class="v-status">${status}</span>
+            </div>`;
+        });
+
+        container.innerHTML = html;
+        if (allOk) {
+          container.innerHTML += '<div style="color:#34c759;font-size:12px;padding:8px 14px;font-weight:600;">All stores validated — ready to run tests.</div>';
+        }
+      } catch (err) {
+        container.innerHTML = `<div style="color:#ff3b30;padding:12px;font-size:13px;">Validation failed: ${err.message}</div>`;
+      }
+
+      btn.textContent = 'Validate Stores';
+      btn.disabled = false;
+    }
+
+    /* ── View Switching ── */
+    function switchView(view) {
+      document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.nav-tab[onclick*="${view}"]`).classList.add('active');
+      document.getElementById('runnerView').style.display = view === 'runner' ? 'block' : 'none';
+      document.getElementById('dashboardView').style.display = view === 'dashboard' ? 'block' : 'none';
+      if (view === 'dashboard') loadRunHistory();
+    }
+
+    /* ── Dashboard ── */
+    let dashRuns = [];
+    let selectedRunId = null;
+    let selectedRunData = null;
+    let currentFilter = 'all';
+
+    async function loadRunHistory() {
+      try {
+        const resp = await fetch('/api/runs');
+        dashRuns = await resp.json();
+        renderRunHistory();
+      } catch (_) {}
+    }
+
+    function renderRunHistory() {
+      const el = document.getElementById('runHistoryList');
+      if (!dashRuns.length) {
+        el.innerHTML = '<div class="dash-empty">No runs yet. Run some tests first.</div>';
+        return;
+      }
+      el.innerHTML = dashRuns.map((r, i) => {
+        const date = new Date(r.startedAt).toLocaleString();
+        const total = r.passed + r.failed;
+        return `
+        <div class="run-card ${selectedRunId === r.id ? 'selected' : ''}" onclick="loadRunDetail('${r.id}')">
+          <div class="run-date">${date}</div>
+          <div class="run-stats">
+            <div class="run-stat"><span class="run-dot green"></span>${r.passed} passed</div>
+            <div class="run-stat"><span class="run-dot red"></span>${r.failed} failed</div>
+            <div class="run-stat">${r.storeCount} stores</div>
+          </div>
+          <span class="run-status ${r.status}">${r.status}</span>
+          ${r.status === 'complete' ? `<button class="btn-diff" onclick="event.stopPropagation(); downloadRunReport('${r.id}')">PDF Report</button>` : ''}
+          ${i > 0 && selectedRunId && selectedRunId !== r.id ? `<button class="btn-diff" onclick="event.stopPropagation(); diffRuns('${selectedRunId}', '${r.id}')">Compare</button>` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    async function loadRunDetail(runId) {
+      selectedRunId = runId;
+      renderRunHistory();
+      try {
+        const resp = await fetch(`/api/runs/${runId}`);
+        selectedRunData = await resp.json();
+        renderRunDetail();
+      } catch (_) {}
+    }
+
+    function renderRunDetail() {
+      if (!selectedRunData) return;
+      document.getElementById('runDetailSection').style.display = 'block';
+      const date = new Date(selectedRunData.startedAt).toLocaleString();
+      document.getElementById('runDetailTitle').textContent = `Run: ${date}`;
+
+      // Group results by store
+      const storeMap = {};
+      selectedRunData.results.forEach(r => {
+        if (!storeMap[r.store]) storeMap[r.store] = { passed: 0, failed: 0, results: [] };
+        storeMap[r.store].results.push(r);
+        if (r.passed) storeMap[r.store].passed++;
+        else storeMap[r.store].failed++;
+      });
+
+      renderDashTable(storeMap);
+    }
+
+    function renderDashTable(storeMap) {
+      const search = (document.getElementById('dashSearch')?.value || '').toLowerCase();
+      const tbody = document.getElementById('dashTableBody');
+      let rows = '';
+
+      for (const [store, data] of Object.entries(storeMap)) {
+        const status = data.failed > 0 ? 'fail' : 'pass';
+        const hostname = truncateUrl(store);
+
+        // Apply filters
+        if (currentFilter === 'pass' && data.failed > 0) continue;
+        if (currentFilter === 'fail' && data.failed === 0) continue;
+        if (search && !hostname.toLowerCase().includes(search)) continue;
+
+        rows += `
+          <tr>
+            <td class="store-name"><span class="status-dot ${status}"></span>${hostname}</td>
+            <td class="pass-count">${data.passed}</td>
+            <td class="fail-count">${data.failed}</td>
+            <td>${data.failed > 0 ? 'Needs Attention' : 'All Passed'}</td>
+          </tr>`;
+      }
+
+      tbody.innerHTML = rows || '<tr><td colspan="4" style="text-align:center;color:#555;padding:24px">No stores match filters</td></tr>';
+    }
+
+    function filterDash(filter) {
+      if (filter) {
+        currentFilter = filter;
+        document.querySelectorAll('.dash-filter').forEach(f => f.classList.remove('active'));
+        document.querySelector(`.dash-filter[onclick*="${filter}"]`).classList.add('active');
+      }
+      if (selectedRunData) renderRunDetail();
+    }
+
+    async function diffRuns(id1, id2) {
+      try {
+        const resp = await fetch(`/api/runs/diff/${id1}/${id2}`);
+        const diff = await resp.json();
+        const section = document.getElementById('diffSection');
+        section.style.display = 'block';
+
+        const date1 = new Date(diff.run1.startedAt).toLocaleString();
+        const date2 = new Date(diff.run2.startedAt).toLocaleString();
+
+        let html = `
+          <div class="diff-summary">
+            <div class="diff-stat"><span class="run-dot green"></span><strong>${diff.summary.fixed}</strong> fixed</div>
+            <div class="diff-stat"><span class="run-dot red"></span><strong>${diff.summary.regressed}</strong> regressed</div>
+            <div class="diff-stat">${diff.summary.newTests} new &middot; ${diff.summary.removed} removed</div>
+          </div>
+          <div style="font-size:12px;color:#86868b;margin-bottom:12px">
+            Comparing: <strong style="color:#fff">${date1}</strong> → <strong style="color:#fff">${date2}</strong>
+          </div>`;
+
+        if (diff.changes.length === 0) {
+          html += '<div class="dash-empty">No changes between these runs.</div>';
+        } else {
+          html += `
+          <table class="diff-table">
+            <thead><tr><th>Store</th><th>Test</th><th>Before</th><th>After</th></tr></thead>
+            <tbody>`;
+          diff.changes.forEach(c => {
+            const cls = c.now === 'PASS' ? 'diff-fixed' : 'diff-regressed';
+            html += `
+              <tr>
+                <td>${truncateUrl(c.store)}</td>
+                <td>${c.testId}</td>
+                <td>${c.was}</td>
+                <td class="${cls}">${c.now}</td>
+              </tr>`;
+          });
+          html += '</tbody></table>';
+        }
+
+        document.getElementById('diffContent').innerHTML = html;
+        section.scrollIntoView({ behavior: 'smooth' });
+      } catch (err) {
+        alert('Could not compare runs: ' + err.message);
+      }
+    }
   </script>
 </body>
 </html>

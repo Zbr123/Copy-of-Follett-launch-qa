@@ -2785,81 +2785,114 @@ async function testCourseMaterials(page, store, emit) {
   };
 }
 
-// ─── Main runner ────────────────────────────────────────────────────
+// ─── Run a single store (all its tests) ─────────────────────────────
 
-async function runTests(stores, testIds, sendEvent) {
-  const browser = await chromium.launch({ headless: true });
+async function runStoreTests(browser, store, testIds, sendEvent) {
+  sendEvent({ type: 'store-start', store: store.newStore });
 
-  for (const store of stores) {
-    sendEvent({
-      type: 'store-start',
-      store: store.newStore,
-    });
+  const context = await browser.newContext({
+    viewport: { width: 1920, height: 1080 },
+    deviceScaleFactor: 2,
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  });
+  const page = await context.newPage();
 
-    const context = await browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-      deviceScaleFactor: 2,
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    });
-    const page = await context.newPage();
+  let loginDone = false;
 
-    // Always do login first if any test is selected
-    let loginDone = false;
+  for (const testId of testIds) {
+    const test = TEST_REGISTRY[testId];
+    if (!test) continue;
 
-    for (const testId of testIds) {
-      const test = TEST_REGISTRY[testId];
-      if (!test) continue;
-
-      // Ensure login happens before other tests
-      if (!loginDone && testId !== 'storefront-login') {
-        const loginTest = TEST_REGISTRY['storefront-login'];
-        sendEvent({ type: 'test-start', store: store.newStore, testId: 'storefront-login', testName: loginTest.name });
-        try {
-          const loginResult = await loginTest.run(page, store, (data) =>
-            sendEvent({ type: 'test-progress', store: store.newStore, testId: 'storefront-login', ...data })
-          );
-          sendEvent({ type: 'test-result', store: store.newStore, testId: 'storefront-login', ...loginResult });
-          loginDone = true;
-          if (!loginResult.passed) {
+    // Ensure login happens before other tests
+    if (!loginDone && testId !== 'storefront-login') {
+      const loginTest = TEST_REGISTRY['storefront-login'];
+      sendEvent({ type: 'test-start', store: store.newStore, testId: 'storefront-login', testName: loginTest.name });
+      try {
+        const loginResult = await loginTest.run(page, store, (data) =>
+          sendEvent({ type: 'test-progress', store: store.newStore, testId: 'storefront-login', ...data })
+        );
+        sendEvent({ type: 'test-result', store: store.newStore, testId: 'storefront-login', ...loginResult });
+        loginDone = true;
+        if (!loginResult.passed) {
+          // Skip all remaining tests for this store
+          for (const remainingId of testIds.slice(testIds.indexOf(testId))) {
+            if (remainingId === 'storefront-login') continue;
             sendEvent({
               type: 'test-result',
               store: store.newStore,
-              testId,
+              testId: remainingId,
               passed: false,
               message: 'Skipped — login failed',
             });
-            continue;
           }
-        } catch (err) {
+          break;
+        }
+      } catch (err) {
+        sendEvent({
+          type: 'test-result',
+          store: store.newStore,
+          testId: 'storefront-login',
+          passed: false,
+          message: `Login error: ${err.message}`,
+        });
+        for (const remainingId of testIds.slice(testIds.indexOf(testId))) {
+          if (remainingId === 'storefront-login') continue;
           sendEvent({
             type: 'test-result',
             store: store.newStore,
-            testId: 'storefront-login',
-            passed: false,
-            message: `Login error: ${err.message}`,
-          });
-          sendEvent({
-            type: 'test-result',
-            store: store.newStore,
-            testId,
+            testId: remainingId,
             passed: false,
             message: 'Skipped — login failed',
           });
-          continue;
+        }
+        break;
+      }
+    }
+
+    if (testId === 'storefront-login' && loginDone) continue;
+
+    sendEvent({ type: 'test-start', store: store.newStore, testId, testName: test.name });
+
+    // Run test with 1 retry on failure
+    let result;
+    let retried = false;
+    try {
+      result = await test.run(page, store, (data) =>
+        sendEvent({ type: 'test-progress', store: store.newStore, testId, ...data })
+      );
+
+      // Retry once if failed
+      if (!result.passed) {
+        retried = true;
+        sendEvent({ type: 'test-progress', store: store.newStore, testId, step: '⟳ Test failed — retrying once...' });
+        try {
+          result = await test.run(page, store, (data) =>
+            sendEvent({ type: 'test-progress', store: store.newStore, testId, ...data })
+          );
+          if (result.passed) {
+            result.message = `[Passed on retry] ${result.message}`;
+          }
+        } catch (retryErr) {
+          // Keep original failure
+          result = { passed: false, message: `Error on retry: ${retryErr.message}` };
         }
       }
 
-      if (testId === 'storefront-login' && loginDone) continue;
-
-      sendEvent({ type: 'test-start', store: store.newStore, testId, testName: test.name });
+      sendEvent({ type: 'test-result', store: store.newStore, testId, ...result });
+      if (testId === 'storefront-login') loginDone = true;
+    } catch (err) {
+      // First attempt threw — retry once
+      sendEvent({ type: 'test-progress', store: store.newStore, testId, step: '⟳ Test errored — retrying once...' });
       try {
-        const result = await test.run(page, store, (data) =>
+        result = await test.run(page, store, (data) =>
           sendEvent({ type: 'test-progress', store: store.newStore, testId, ...data })
         );
+        if (result.passed) {
+          result.message = `[Passed on retry] ${result.message}`;
+        }
         sendEvent({ type: 'test-result', store: store.newStore, testId, ...result });
-        if (testId === 'storefront-login') loginDone = true;
-      } catch (err) {
+      } catch (retryErr) {
         const errShot = screenshotPath(store.newStore, testId, 'error');
         try {
           await page.screenshot({ path: errShot, fullPage: false });
@@ -2876,14 +2909,50 @@ async function runTests(stores, testIds, sendEvent) {
           store: store.newStore,
           testId,
           passed: false,
-          message: `Error: ${err.message}`,
+          message: `Error: ${retryErr.message}`,
         });
       }
     }
-
-    await context.close();
-    sendEvent({ type: 'store-complete', store: store.newStore });
   }
+
+  await context.close();
+  sendEvent({ type: 'store-complete', store: store.newStore });
+}
+
+// ─── Main runner (parallel) ─────────────────────────────────────────
+
+const DEFAULT_CONCURRENCY = 5;
+
+async function runTests(stores, testIds, sendEvent, options = {}) {
+  const concurrency = options.concurrency || DEFAULT_CONCURRENCY;
+  const browser = await chromium.launch({ headless: true });
+
+  // Process stores in parallel with limited concurrency
+  const queue = [...stores];
+  const running = new Set();
+
+  await new Promise((resolve) => {
+    function startNext() {
+      while (running.size < concurrency && queue.length > 0) {
+        const store = queue.shift();
+        const promise = runStoreTests(browser, store, testIds, sendEvent)
+          .catch(err => {
+            sendEvent({ type: 'error', message: `Store ${store.newStore} failed: ${err.message}` });
+          })
+          .finally(() => {
+            running.delete(promise);
+            if (queue.length > 0) {
+              startNext();
+            } else if (running.size === 0) {
+              resolve();
+            }
+          });
+        running.add(promise);
+      }
+      if (running.size === 0 && queue.length === 0) resolve();
+    }
+    startNext();
+  });
 
   await browser.close();
 }

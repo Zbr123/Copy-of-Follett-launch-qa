@@ -11,9 +11,13 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/screenshots', express.static(path.join(__dirname, 'screenshots')));
 
+// ── Run history persistence ──
+const RUNS_DIR = path.join(__dirname, 'runs');
+if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR, { recursive: true });
+
 // SSE endpoint for real-time test results
 app.post('/api/run-tests', async (req, res) => {
-  const { stores, tests } = req.body;
+  const { stores, tests, concurrency } = req.body;
 
   if (!stores || !stores.length) {
     return res.status(400).json({ error: 'No stores provided' });
@@ -27,18 +31,355 @@ app.post('/api/run-tests', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
+  // Create a run record for persistence
+  const runId = new Date().toISOString().replace(/[:.]/g, '-');
+  const runFile = path.join(RUNS_DIR, `${runId}.json`);
+  const runData = {
+    id: runId,
+    startedAt: new Date().toISOString(),
+    stores: stores.map(s => s.newStore),
+    tests,
+    concurrency: concurrency || 5,
+    results: [],
+    status: 'running',
+  };
+  fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
+
+  // Track screenshots per store+test as they arrive
+  const screenshotTracker = {}; // key: "store|testId" → [{ src, label }]
+
   const sendEvent = (data) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    // Collect screenshots from progress events
+    if (data.type === 'test-progress' && data.screenshot) {
+      const key = `${data.store}|${data.testId}`;
+      if (!screenshotTracker[key]) screenshotTracker[key] = [];
+      screenshotTracker[key].push({ src: data.screenshot, label: data.label || '' });
+    }
+
+    // Persist test results with their screenshots
+    if (data.type === 'test-result') {
+      const key = `${data.store}|${data.testId}`;
+      runData.results.push({
+        store: data.store,
+        testId: data.testId,
+        passed: data.passed,
+        message: data.message,
+        checks: data.checks || [],
+        screenshots: screenshotTracker[key] || [],
+        timestamp: new Date().toISOString(),
+      });
+      try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
+    }
   };
 
   try {
-    await runTests(stores, tests, sendEvent);
+    await runTests(stores, tests, sendEvent, { concurrency: concurrency || 5 });
+    runData.status = 'complete';
+    runData.completedAt = new Date().toISOString();
+    fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
     sendEvent({ type: 'complete' });
   } catch (err) {
+    runData.status = 'error';
+    runData.error = err.message;
+    fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
     sendEvent({ type: 'error', message: err.message });
   }
 
   res.end();
+});
+
+// ── Scheduled runs ──
+const scheduledRuns = [];
+
+app.post('/api/schedule-run', (req, res) => {
+  const { stores, tests, scheduledFor, concurrency } = req.body;
+  if (!stores || !stores.length || !tests || !tests.length || !scheduledFor) {
+    return res.status(400).json({ error: 'Missing stores, tests, or scheduledFor' });
+  }
+
+  const runTime = new Date(scheduledFor);
+  const now = new Date();
+  const delay = runTime.getTime() - now.getTime();
+
+  if (delay < 0) {
+    return res.status(400).json({ error: 'Scheduled time is in the past' });
+  }
+
+  const scheduleId = `sched-${Date.now()}`;
+  const entry = {
+    id: scheduleId,
+    stores,
+    tests,
+    concurrency: concurrency || 5,
+    scheduledFor: runTime.toISOString(),
+    status: 'scheduled',
+    runId: null,
+  };
+
+  const timer = setTimeout(async () => {
+    entry.status = 'running';
+    const runId = new Date().toISOString().replace(/[:.]/g, '-');
+    const runFile = path.join(RUNS_DIR, `${runId}.json`);
+    const runData = {
+      id: runId,
+      startedAt: new Date().toISOString(),
+      stores: stores.map(s => s.newStore),
+      tests,
+      concurrency: entry.concurrency,
+      results: [],
+      status: 'running',
+      scheduled: true,
+    };
+    fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
+    entry.runId = runId;
+
+    const sendEvent = (data) => {
+      if (data.type === 'test-result') {
+        runData.results.push({
+          store: data.store, testId: data.testId,
+          passed: data.passed, message: data.message,
+          checks: data.checks || [],
+          timestamp: new Date().toISOString(),
+        });
+        try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
+      }
+    };
+
+    try {
+      await runTests(stores, tests, sendEvent, { concurrency: entry.concurrency });
+      runData.status = 'complete';
+      runData.completedAt = new Date().toISOString();
+      entry.status = 'complete';
+    } catch (err) {
+      runData.status = 'error';
+      runData.error = err.message;
+      entry.status = 'error';
+    }
+    fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
+  }, delay);
+
+  entry._timer = timer;
+  scheduledRuns.push(entry);
+
+  res.json({ id: scheduleId, scheduledFor: runTime.toISOString() });
+});
+
+app.get('/api/scheduled-runs', (req, res) => {
+  res.json(scheduledRuns.map(({ _timer, ...rest }) => rest));
+});
+
+app.delete('/api/scheduled-runs/:id', (req, res) => {
+  const idx = scheduledRuns.findIndex(s => s.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  clearTimeout(scheduledRuns[idx]._timer);
+  scheduledRuns.splice(idx, 1);
+  res.json({ ok: true });
+});
+
+// ── Store validation API ──
+app.post('/api/validate-stores', async (req, res) => {
+  const { stores } = req.body;
+  if (!stores || !stores.length) return res.status(400).json({ error: 'No stores' });
+
+  const results = [];
+  const browser = await chromium.launch({ headless: true });
+
+  for (const store of stores) {
+    const result = { store: store.newStore, reachable: false, passwordWorks: null, error: null };
+    try {
+      const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      });
+      const page = await context.newPage();
+      const url = store.newStore.startsWith('http') ? store.newStore : `https://${store.newStore}`;
+      const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      result.reachable = resp && resp.status() < 500;
+
+      // Check if password gate exists and if password works
+      const hasPasswordGate = await page.evaluate(() => {
+        return !!document.querySelector('form[action*="password"]') || document.body.innerText.includes('Enter store password');
+      });
+
+      if (hasPasswordGate && store.password) {
+        const pwInput = await page.$('input[type="password"]');
+        if (pwInput) {
+          await pwInput.fill(store.password);
+          await page.click('button[type="submit"]');
+          await page.waitForTimeout(3000);
+          const stillOnPassword = await page.evaluate(() => {
+            return !!document.querySelector('form[action*="password"]') || document.body.innerText.includes('Enter store password');
+          });
+          result.passwordWorks = !stillOnPassword;
+        }
+      } else if (!hasPasswordGate) {
+        result.passwordWorks = true; // No gate, no password needed
+      }
+
+      await context.close();
+    } catch (err) {
+      result.error = err.message;
+    }
+    results.push(result);
+  }
+
+  await browser.close();
+  res.json(results);
+});
+
+// ── Run history API ──
+
+// List all runs
+app.get('/api/runs', (req, res) => {
+  try {
+    const files = fs.readdirSync(RUNS_DIR).filter(f => f.endsWith('.json')).sort().reverse();
+    const runs = files.map(f => {
+      const data = JSON.parse(fs.readFileSync(path.join(RUNS_DIR, f), 'utf8'));
+      return {
+        id: data.id,
+        startedAt: data.startedAt,
+        completedAt: data.completedAt,
+        status: data.status,
+        storeCount: data.stores.length,
+        passed: data.results.filter(r => r.passed).length,
+        failed: data.results.filter(r => !r.passed).length,
+      };
+    });
+    res.json(runs);
+  } catch (err) {
+    res.json([]);
+  }
+});
+
+// Get a specific run
+app.get('/api/runs/:id', (req, res) => {
+  const runFile = path.join(RUNS_DIR, `${req.params.id}.json`);
+  if (!fs.existsSync(runFile)) return res.status(404).json({ error: 'Run not found' });
+  res.json(JSON.parse(fs.readFileSync(runFile, 'utf8')));
+});
+
+// Generate PDF from a saved run
+app.get('/api/runs/:id/pdf', async (req, res) => {
+  const runFile = path.join(RUNS_DIR, `${req.params.id}.json`);
+  if (!fs.existsSync(runFile)) return res.status(404).json({ error: 'Run not found' });
+
+  const runData = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  const totalTests = runData.results.length;
+  const passedTests = runData.results.filter(r => r.passed).length;
+  const failedTests = runData.results.filter(r => !r.passed).length;
+
+  // Convert saved screenshots to base64
+  const screenshotCache = {};
+  for (const r of runData.results) {
+    for (const s of (r.screenshots || [])) {
+      if (s.src && !screenshotCache[s.src]) {
+        try {
+          const filePath = path.join(__dirname, s.src.replace(/^\//, ''));
+          if (fs.existsSync(filePath)) {
+            const buf = fs.readFileSync(filePath);
+            screenshotCache[s.src] = `data:image/png;base64,${buf.toString('base64')}`;
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  // Build results in the format buildPdfHtml expects
+  const results = runData.results.map(r => ({
+    store: r.store,
+    testId: r.testId,
+    testName: r.testId,
+    passed: r.passed,
+    message: r.message,
+    checks: r.checks || [],
+    screenshots: r.screenshots || [],
+    steps: [],
+  }));
+
+  // Read logo
+  let logoBase64 = '';
+  try {
+    const logoBuf = fs.readFileSync(path.join(__dirname, 'public', 'p3-logo.png'));
+    logoBase64 = `data:image/png;base64,${logoBuf.toString('base64')}`;
+  } catch (_) {}
+
+  const now = new Date(runData.startedAt);
+  const dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+  const groups = {};
+  results.forEach(r => { (groups[r.store] = groups[r.store] || []).push(r); });
+  const storeCount = Object.keys(groups).length;
+
+  const html = buildPdfHtml({
+    logoBase64, results, groups, totalTests, passedTests, failedTests,
+    storeCount, dateStr, timeStr, screenshotCache,
+  });
+
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle' });
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
+      printBackground: true,
+      preferCSSPageSize: false,
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Follett-QA-Report-${req.params.id.slice(0,10)}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (browser) await browser.close();
+  }
+});
+
+// Diff two runs
+app.get('/api/runs/diff/:id1/:id2', (req, res) => {
+  const file1 = path.join(RUNS_DIR, `${req.params.id1}.json`);
+  const file2 = path.join(RUNS_DIR, `${req.params.id2}.json`);
+  if (!fs.existsSync(file1) || !fs.existsSync(file2)) {
+    return res.status(404).json({ error: 'One or both runs not found' });
+  }
+  const run1 = JSON.parse(fs.readFileSync(file1, 'utf8'));
+  const run2 = JSON.parse(fs.readFileSync(file2, 'utf8'));
+
+  // Build lookup: store+testId → passed
+  const map1 = {};
+  run1.results.forEach(r => { map1[`${r.store}|${r.testId}`] = r.passed; });
+  const map2 = {};
+  run2.results.forEach(r => { map2[`${r.store}|${r.testId}`] = r.passed; });
+
+  const allKeys = new Set([...Object.keys(map1), ...Object.keys(map2)]);
+  const changes = [];
+  for (const key of allKeys) {
+    const [store, testId] = key.split('|');
+    const was = map1[key];
+    const now = map2[key];
+    if (was !== now) {
+      changes.push({
+        store, testId,
+        was: was === undefined ? 'not run' : was ? 'PASS' : 'FAIL',
+        now: now === undefined ? 'not run' : now ? 'PASS' : 'FAIL',
+      });
+    }
+  }
+
+  res.json({
+    run1: { id: run1.id, startedAt: run1.startedAt },
+    run2: { id: run2.id, startedAt: run2.startedAt },
+    changes,
+    summary: {
+      fixed: changes.filter(c => c.was === 'FAIL' && c.now === 'PASS').length,
+      regressed: changes.filter(c => c.was === 'PASS' && c.now === 'FAIL').length,
+      newTests: changes.filter(c => c.was === 'not run').length,
+      removed: changes.filter(c => c.now === 'not run').length,
+    },
+  });
 });
 
 // PDF report generation endpoint
