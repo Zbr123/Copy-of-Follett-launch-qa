@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Follett Launch QA — P3 Media</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #000;
+      color: #fff;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Nav ── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(0,0,0,0.85);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid #222;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 40px;
+    }
+    nav .nav-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    nav .nav-left img {
+      height: 28px;
+      filter: invert(1);
+    }
+    nav .nav-left .divider {
+      width: 1px;
+      height: 20px;
+      background: #333;
+    }
+    nav .nav-left span {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f5f5f7;
+      letter-spacing: -0.2px;
+    }
+    nav .nav-right {
+      font-size: 12px;
+      color: #86868b;
+    }
+
+    /* ── Container ── */
+    .container {
+      max-width: 740px;
+      margin: 0 auto;
+      padding: 60px 24px 120px;
+    }
+
+    /* ── Section Headers (Apple-style) ── */
+    .step-header {
+      margin-bottom: 28px;
+    }
+    .step-header h2 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      line-height: 1.2;
+    }
+    .step-header h2 span {
+      color: #86868b;
+      font-weight: 400;
+    }
+    .step-section {
+      margin-bottom: 64px;
+    }
+
+    /* ── Store Input ── */
+    .store-card {
+      background: #1d1d1f;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 12px;
+      position: relative;
+      border: 1px solid #1d1d1f;
+      transition: border-color 0.2s;
+    }
+    .store-card:hover {
+      border-color: #333;
+    }
+    .store-card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .store-card-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #86868b;
+    }
+    .store-card .btn-remove {
+      background: none;
+      border: none;
+      color: #86868b;
+      cursor: pointer;
+      font-size: 20px;
+      padding: 0 4px;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+    .store-card .btn-remove:hover { color: #ff453a; }
+    .store-fields {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 12px;
+    }
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: #86868b;
+      margin-bottom: 6px;
+    }
+    .field input {
+      width: 100%;
+      background: #000;
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: #f5f5f7;
+      font-size: 14px;
+      font-family: 'Inter', sans-serif;
+      transition: border-color 0.2s;
+    }
+    .field input:focus {
+      outline: none;
+      border-color: #fff;
+    }
+    .field input::placeholder { color: #636366; }
+
+    .btn-add-store {
+      width: 100%;
+      background: transparent;
+      border: 2px dashed #333;
+      border-radius: 16px;
+      color: #86868b;
+      cursor: pointer;
+      padding: 16px;
+      font-size: 14px;
+      font-weight: 500;
+      font-family: 'Inter', sans-serif;
+      transition: all 0.2s;
+      margin-bottom: 12px;
+    }
+    .btn-add-store:hover {
+      border-color: #555;
+      color: #f5f5f7;
+    }
+
+    .bulk-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #86868b;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      padding: 0;
+      transition: color 0.15s;
+    }
+    .bulk-link:hover { color: #f5f5f7; }
+    .bulk-panel {
+      display: none;
+      background: #1d1d1f;
+      border-radius: 16px;
+      padding: 20px;
+      margin-top: 12px;
+    }
+    .bulk-panel.show { display: block; }
+    .bulk-panel textarea {
+      width: 100%;
+      background: #000;
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: #f5f5f7;
+      font-size: 13px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      resize: vertical;
+      min-height: 90px;
+    }
+    .bulk-panel textarea:focus { outline: none; border-color: #fff; }
+    .bulk-panel textarea::placeholder { color: #636366; }
+    .bulk-panel .bulk-hint {
+      font-size: 11px;
+      color: #86868b;
+      margin: 8px 0 12px;
+    }
+    .bulk-panel .btn-import {
+      background: #fff;
+      border: none;
+      border-radius: 8px;
+      color: #000;
+      cursor: pointer;
+      padding: 8px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+    }
+    .bulk-panel .btn-import:hover { background: #e8e8ed; }
+
+    /* ── Test Selection ── */
+    .test-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .test-option {
+      background: #1d1d1f;
+      border: 2px solid #1d1d1f;
+      border-radius: 14px;
+      padding: 16px 18px;
+      cursor: pointer;
+      transition: all 0.2s;
+      user-select: none;
+      position: relative;
+    }
+    .test-option:hover {
+      border-color: #333;
+    }
+    .test-option.selected {
+      border-color: #1d1d1f;
+    }
+    .test-option .check-dot {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid #636366;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .test-option.selected .check-dot {
+      background: #fff;
+      border-color: #fff;
+    }
+    .test-option.selected .check-dot::after {
+      content: '';
+      width: 6px;
+      height: 10px;
+      border: solid #000;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+      margin-top: -2px;
+    }
+    .test-option .t-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f5f5f7;
+      margin-bottom: 4px;
+      padding-right: 28px;
+    }
+    .test-option .t-desc {
+      font-size: 12px;
+      color: #86868b;
+      line-height: 1.4;
+    }
+    .test-option.selected .t-name { color: #fff; }
+    .test-controls {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    .test-controls button {
+      background: none;
+      border: none;
+      color: #86868b;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: 'Inter', sans-serif;
+      padding: 0;
+      transition: color 0.15s;
+    }
+    .test-controls button:hover { color: #fff; }
+
+    /* ── Run Button ── */
+    .run-section {
+      text-align: center;
+      margin-bottom: 64px;
+    }
+    .btn-run {
+      background: #fff;
+      border: none;
+      border-radius: 980px;
+      color: #000;
+      cursor: pointer;
+      padding: 16px 60px;
+      font-size: 17px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      transition: all 0.3s;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn-run:hover {
+      background: #e8e8ed;
+      transform: scale(1.02);
+    }
+    .btn-run:active { transform: scale(0.98); }
+    .btn-run:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .btn-run .spinner {
+      display: none;
+      width: 18px; height: 18px;
+      border: 2.5px solid #0003;
+      border-top-color: #000;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    .btn-run.running .spinner { display: block; }
+    .btn-run .run-label { }
+    .btn-run.running .run-label { display: none; }
+    .btn-run .running-label { display: none; }
+    .btn-run.running .running-label { display: inline; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Results Area ── */
+    .results-wrapper {
+      display: none;
+    }
+    .results-wrapper.show {
+      display: block;
+    }
+
+    /* ── Progress ── */
+    .progress-section {
+      margin-bottom: 32px;
+    }
+    .progress-bar-track {
+      width: 100%;
+      height: 4px;
+      background: #1d1d1f;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: #fff;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+      width: 0%;
+    }
+    .progress-stats {
+      display: flex;
+      gap: 32px;
+    }
+    .progress-stat {
+      font-size: 13px;
+      color: #86868b;
+    }
+    .progress-stat strong {
+      color: #f5f5f7;
+      font-weight: 600;
+    }
+    .progress-stat.pass strong { color: #30d158; }
+    .progress-stat.fail strong { color: #ff453a; }
+
+    /* ── Validation Reminder ── */
+    .reminder-bar {
+      display: none;
+      background: #1d1d1f;
+      border-left: 3px solid #ffd60a;
+      border-radius: 0 12px 12px 0;
+      padding: 14px 20px;
+      margin-bottom: 24px;
+      font-size: 13px;
+      color: #86868b;
+      line-height: 1.5;
+    }
+    .reminder-bar.show { display: block; }
+    .reminder-bar strong { color: #ffd60a; }
+
+    /* ── Export Bar ── */
+    .export-bar {
+      display: none;
+      background: #1d1d1f;
+      border-radius: 14px;
+      padding: 18px 24px;
+      margin-bottom: 28px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .export-bar.show { display: flex; }
+    .export-bar-text {
+      font-size: 14px;
+      font-weight: 500;
+      color: #f5f5f7;
+    }
+    .export-bar-text small {
+      display: block;
+      font-size: 12px;
+      color: #86868b;
+      font-weight: 400;
+      margin-top: 2px;
+    }
+    .export-buttons {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-export {
+      background: #000;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #f5f5f7;
+      cursor: pointer;
+      padding: 8px 18px;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: 'Inter', sans-serif;
+      transition: all 0.2s;
+    }
+    .btn-export:hover {
+      border-color: #fff;
+      color: #fff;
+    }
+
+    /* ── Store Result Card ── */
+    .result-card {
+      background: #1d1d1f;
+      border-radius: 16px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .result-card-header {
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    .result-card-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .result-status {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .result-status.running { background: #ffd60a; animation: pulse 1.5s infinite; }
+    .result-status.pass { background: #30d158; }
+    .result-status.fail { background: #ff453a; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .result-card-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f5f5f7;
+    }
+    .result-card-meta {
+      font-size: 12px;
+      color: #86868b;
+    }
+    .result-card-body { padding: 8px 12px 12px; }
+
+    /* ── Individual Test Row ── */
+    .test-result-row {
+      border-radius: 10px;
+      margin-bottom: 4px;
+      overflow: hidden;
+    }
+    .test-result-row-header {
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      border-radius: 10px;
+      transition: background 0.12s;
+    }
+    .test-result-row-header:hover { background: #2a2a2a; }
+    .tr-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .tr-dot.pass { background: #30d158; }
+    .tr-dot.fail { background: #ff453a; }
+    .tr-dot.running { background: #ffd60a; animation: pulse 1.5s infinite; }
+    .tr-name {
+      flex: 1;
+      font-size: 14px;
+      font-weight: 500;
+      color: #f5f5f7;
+    }
+    .tr-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 6px;
+    }
+    .tr-badge.pass { background: #30d15818; color: #30d158; }
+    .tr-badge.fail { background: #ff453a18; color: #ff453a; }
+    .tr-badge.running { background: #ffd60a18; color: #ffd60a; }
+    .tr-chevron {
+      color: #86868b;
+      font-size: 11px;
+      transition: transform 0.2s;
+    }
+    .test-result-row.expanded .tr-chevron { transform: rotate(90deg); }
+    .tr-detail {
+      display: none;
+      padding: 4px 16px 16px 36px;
+    }
+    .test-result-row.expanded .tr-detail { display: block; }
+    .tr-message {
+      font-size: 13px;
+      color: #86868b;
+      line-height: 1.5;
+      margin-bottom: 8px;
+    }
+    .tr-steps .step {
+      font-size: 12px;
+      color: #a1a1a6;
+      padding: 2px 0;
+    }
+    .tr-screenshots {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .sc-thumb {
+      width: 200px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid #333;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #000;
+    }
+    .sc-thumb:hover {
+      border-color: #fff;
+      transform: translateY(-2px);
+    }
+    .sc-thumb img {
+      width: 100%;
+      display: block;
+    }
+    .sc-thumb .sc-label {
+      padding: 6px 10px;
+      font-size: 10px;
+      color: #86868b;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      border-top: 1px solid #333;
+    }
+
+    /* ── Lightbox ── */
+    .lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.95);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+    }
+    .lightbox.show { display: flex; }
+    .lightbox img {
+      max-width: 92vw;
+      max-height: 92vh;
+      border-radius: 12px;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <div class="nav-left">
+      <img src="/p3-logo.png" alt="P3 Media" />
+      <div class="divider"></div>
+      <span>Follett Launch QA</span>
+    </div>
+    <div class="nav-right" id="clockDisplay"></div>
+  </nav>
+
+  <div class="container">
+
+    <!-- ── Step 1: Stores ── -->
+    <div class="step-section">
+      <div class="step-header">
+        <h2>Stores. <span>Add the stores you want to test.</span></h2>
+      </div>
+      <div id="storeRows"></div>
+      <button class="btn-add-store" onclick="addStoreRow()">+ Add Store</button>
+      <button class="bulk-link" onclick="toggleBulk()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Bulk paste from CSV
+      </button>
+      <div class="bulk-panel" id="bulkArea">
+        <textarea id="bulkInput" placeholder="store-name.myshopify.com, password&#10;another-store.myshopify.com, pass456"></textarea>
+        <div class="bulk-hint">One store per line: URL, password (comma-separated)</div>
+        <button class="btn-import" onclick="parseBulk()">Import Stores</button>
+      </div>
+    </div>
+
+    <!-- ── Step 2: Tests ── -->
+    <div class="step-section">
+      <div class="step-header">
+        <h2>Tests. <span>Choose what to check.</span></h2>
+      </div>
+      <div class="test-controls">
+        <button onclick="selectAllTests()">Select All</button>
+        <button onclick="deselectAllTests()">Deselect All</button>
+      </div>
+      <div class="test-grid" id="testList"></div>
+    </div>
+
+    <!-- ── Run ── -->
+    <div class="run-section">
+      <button class="btn-run" id="runBtn" onclick="runTests()">
+        <span class="spinner"></span>
+        <span class="run-label">Run All Tests</span>
+        <span class="running-label">Running...</span>
+      </button>
+    </div>
+
+    <!-- ── Results ── -->
+    <div class="results-wrapper" id="resultsWrapper">
+      <div class="step-header">
+        <h2>Results. <span id="resultsSubtitle">Tests are running...</span></h2>
+      </div>
+
+      <div class="progress-section" id="progressSection">
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-stats">
+          <div class="progress-stat"><strong id="statTotal">0</strong> total</div>
+          <div class="progress-stat pass"><strong id="statPass">0</strong> passed</div>
+          <div class="progress-stat fail"><strong id="statFail">0</strong> failed</div>
+        </div>
+      </div>
+
+      <div class="reminder-bar" id="reminderBar">
+        <strong>Reminder:</strong> Manually verify each passed check before sign-off. Automated tests confirm presence &amp; visibility — human judgment confirms accuracy. Download a report for auditing.
+      </div>
+
+      <div class="export-bar" id="exportBar">
+        <div class="export-bar-text">
+          Export Report
+          <small>Download results with screenshots for audit trails.</small>
+        </div>
+        <div class="export-buttons">
+          <button class="btn-export" onclick="exportCSV()">CSV</button>
+          <button class="btn-export" onclick="exportHTML()">Full Report</button>
+        </div>
+      </div>
+
+      <div id="results"></div>
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div class="lightbox" id="lightbox" onclick="this.classList.remove('show')">
+    <img id="lightboxImg" />
+  </div>
+
+  <script>
+    /* ================================================================ */
+    const TESTS = [
+      { id: 'storefront-login', name: 'Storefront Login', desc: 'Authenticate past the password gate' },
+      { id: 'storefront-loads', name: 'Storefront Loads', desc: 'Verify homepage loads with content' },
+      { id: 'collection-page', name: 'Collection Page', desc: 'Product listing pages render correctly' },
+      { id: 'cart-add', name: 'Add to Cart', desc: 'Add a product and verify cart state' },
+      { id: 'rental-collateral', name: 'Rental Collateral', desc: 'Rent flow + checkout collateral message' },
+      { id: 'digital-delivery-fee', name: 'Digital Delivery Fee', desc: 'Digital product + delivery fee in checkout' },
+      { id: 'checkout-validation', name: 'Checkout Validation', desc: 'Field labels, Financial Aid, Follett disclaimer' },
+      { id: 'pickup-name-validation', name: 'Pickup Name Validation', desc: 'Location name has no numeric store ID' },
+      { id: 'page-content-migration', name: 'Page & Content Migration', desc: '21 checks: logo, hours, footer, policies' },
+      { id: 'homepage-plp-pdp', name: 'Homepage, PLP & PDP', desc: 'Banners, ads, filters, color swatches' },
+      { id: 'course-materials', name: 'Course Materials', desc: 'Textbook search, dropdowns, add to cart' },
+    ];
+
+    const selectedTests = new Set(TESTS.map(t => t.id));
+
+    /* ── Build Test Grid ── */
+    const testListEl = document.getElementById('testList');
+    TESTS.forEach(t => {
+      const div = document.createElement('div');
+      div.className = 'test-option selected';
+      div.dataset.id = t.id;
+      div.innerHTML = `
+        <div class="check-dot"></div>
+        <div class="t-name">${t.name}</div>
+        <div class="t-desc">${t.desc}</div>`;
+      div.onclick = () => {
+        if (div.classList.contains('selected')) {
+          div.classList.remove('selected');
+          selectedTests.delete(t.id);
+        } else {
+          div.classList.add('selected');
+          selectedTests.add(t.id);
+        }
+        updateRunLabel();
+      };
+      testListEl.appendChild(div);
+    });
+
+    function selectAllTests() {
+      document.querySelectorAll('.test-option').forEach(el => {
+        el.classList.add('selected');
+        selectedTests.add(el.dataset.id);
+      });
+      updateRunLabel();
+    }
+    function deselectAllTests() {
+      document.querySelectorAll('.test-option').forEach(el => {
+        el.classList.remove('selected');
+        selectedTests.delete(el.dataset.id);
+      });
+      updateRunLabel();
+    }
+    function updateRunLabel() {
+      const label = document.querySelector('.btn-run .run-label');
+      label.textContent = selectedTests.size === TESTS.length
+        ? 'Run All Tests'
+        : `Run ${selectedTests.size} Test${selectedTests.size !== 1 ? 's' : ''}`;
+    }
+
+    /* ── Store Rows ── */
+    let storeCounter = 0;
+    function addStoreRow(url = '', pw = '') {
+      storeCounter++;
+      const container = document.getElementById('storeRows');
+      const card = document.createElement('div');
+      card.className = 'store-card';
+      card.innerHTML = `
+        <div class="store-card-top">
+          <div class="store-card-label">Store ${storeCounter}</div>
+          <button class="btn-remove" onclick="removeStore(this)">&times;</button>
+        </div>
+        <div class="store-fields">
+          <div class="field">
+            <label>Shopify Store URL</label>
+            <input type="text" placeholder="store-name.myshopify.com" value="${url}" class="store-url" />
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input type="password" placeholder="Preview password" value="${pw}" class="store-pw" />
+          </div>
+        </div>`;
+      container.appendChild(card);
+    }
+    function removeStore(btn) {
+      btn.closest('.store-card').remove();
+      renumberStores();
+    }
+    function renumberStores() {
+      document.querySelectorAll('.store-card').forEach((card, i) => {
+        card.querySelector('.store-card-label').textContent = `Store ${i + 1}`;
+      });
+      storeCounter = document.querySelectorAll('.store-card').length;
+    }
+    addStoreRow();
+
+    function toggleBulk() { document.getElementById('bulkArea').classList.toggle('show'); }
+    function parseBulk() {
+      const text = document.getElementById('bulkInput').value.trim();
+      if (!text) return;
+      text.split('\n').filter(l => l.trim()).forEach(line => {
+        const parts = line.split(',').map(s => s.trim());
+        addStoreRow(parts[0] || '', parts[1] || '');
+      });
+      document.getElementById('bulkInput').value = '';
+      document.getElementById('bulkArea').classList.remove('show');
+    }
+    function getStores() {
+      return Array.from(document.querySelectorAll('.store-card')).map(card => ({
+        originalStore: '',
+        newStore: card.querySelector('.store-url').value.trim(),
+        password: card.querySelector('.store-pw').value.trim(),
+      })).filter(s => s.newStore);
+    }
+
+    /* ── Results ── */
+    const resultState = {};
+    let totalTests = 0, passedTests = 0, failedTests = 0, expectedTotal = 0;
+    const allResults = [];
+
+    function updateProgress() {
+      document.getElementById('statTotal').textContent = totalTests;
+      document.getElementById('statPass').textContent = passedTests;
+      document.getElementById('statFail').textContent = failedTests;
+      if (expectedTotal > 0) {
+        document.getElementById('progressFill').style.width = Math.round((totalTests / expectedTotal) * 100) + '%';
+      }
+    }
+
+    function getOrCreateResultCard(storeName) {
+      if (resultState[storeName]) return resultState[storeName];
+      const container = document.getElementById('results');
+      const card = document.createElement('div');
+      card.className = 'result-card';
+      card.innerHTML = `
+        <div class="result-card-header">
+          <div class="result-card-header-left">
+            <div class="result-status running"></div>
+            <div>
+              <div class="result-card-name">${storeName}</div>
+              <div class="result-card-meta">Running...</div>
+            </div>
+          </div>
+        </div>
+        <div class="result-card-body"></div>`;
+      container.appendChild(card);
+      resultState[storeName] = {
+        el: card,
+        statusDot: card.querySelector('.result-status'),
+        meta: card.querySelector('.result-card-meta'),
+        body: card.querySelector('.result-card-body'),
+        tests: {}, passCount: 0, failCount: 0,
+      };
+      return resultState[storeName];
+    }
+
+    function getOrCreateTestRow(storeName, testId, testName) {
+      const store = getOrCreateResultCard(storeName);
+      if (store.tests[testId]) return store.tests[testId];
+      const row = document.createElement('div');
+      row.className = 'test-result-row';
+      row.innerHTML = `
+        <div class="test-result-row-header" onclick="this.parentElement.classList.toggle('expanded')">
+          <div class="tr-dot running"></div>
+          <div class="tr-name">${testName || testId}</div>
+          <span class="tr-badge running">Running</span>
+          <span class="tr-chevron">&#9654;</span>
+        </div>
+        <div class="tr-detail">
+          <div class="tr-message"></div>
+          <div class="tr-steps"></div>
+          <div class="tr-screenshots"></div>
+        </div>`;
+      store.body.appendChild(row);
+      store.tests[testId] = {
+        el: row,
+        dot: row.querySelector('.tr-dot'),
+        badge: row.querySelector('.tr-badge'),
+        stepsEl: row.querySelector('.tr-steps'),
+        msgEl: row.querySelector('.tr-message'),
+        screenshotsEl: row.querySelector('.tr-screenshots'),
+        screenshots: [], steps: [],
+      };
+      return store.tests[testId];
+    }
+
+    /* ── Run ── */
+    async function runTests() {
+      const stores = getStores();
+      if (!stores.length) return alert('Please add at least one store URL.');
+      if (!selectedTests.size) return alert('Please select at least one test.');
+
+      const btn = document.getElementById('runBtn');
+      btn.disabled = true;
+      btn.classList.add('running');
+
+      document.getElementById('results').innerHTML = '';
+      document.getElementById('resultsWrapper').classList.add('show');
+      document.getElementById('resultsSubtitle').textContent = 'Tests are running...';
+      document.getElementById('progressFill').style.width = '0%';
+      document.getElementById('reminderBar').classList.remove('show');
+      document.getElementById('exportBar').classList.remove('show');
+      Object.keys(resultState).forEach(k => delete resultState[k]);
+      allResults.length = 0;
+      totalTests = 0; passedTests = 0; failedTests = 0;
+      expectedTotal = stores.length * selectedTests.size;
+      updateProgress();
+
+      // Scroll to results
+      document.getElementById('resultsWrapper').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      const tests = Array.from(selectedTests);
+      try {
+        const response = await fetch('/api/run-tests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stores, tests }),
+        });
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = JSON.parse(line.slice(6));
+            switch (data.type) {
+              case 'store-start': getOrCreateResultCard(data.store); break;
+              case 'test-start': getOrCreateTestRow(data.store, data.testId, data.testName); break;
+              case 'test-progress': {
+                const tr = getOrCreateTestRow(data.store, data.testId, data.testId);
+                if (data.step) {
+                  const s = document.createElement('div');
+                  s.className = 'step';
+                  s.textContent = data.step;
+                  tr.stepsEl.appendChild(s);
+                  tr.steps.push(data.step);
+                }
+                if (data.screenshot) {
+                  const thumb = document.createElement('div');
+                  thumb.className = 'sc-thumb';
+                  thumb.innerHTML = `<img src="${data.screenshot}" loading="lazy" /><div class="sc-label">${data.label || 'Screenshot'}</div>`;
+                  thumb.onclick = () => {
+                    document.getElementById('lightboxImg').src = data.screenshot;
+                    document.getElementById('lightbox').classList.add('show');
+                  };
+                  tr.screenshotsEl.appendChild(thumb);
+                  tr.screenshots.push({ src: data.screenshot, label: data.label || '' });
+                }
+                break;
+              }
+              case 'test-result': {
+                const tr = getOrCreateTestRow(data.store, data.testId, data.testId);
+                const s = data.passed ? 'pass' : 'fail';
+                tr.dot.className = 'tr-dot ' + s;
+                tr.badge.className = 'tr-badge ' + s;
+                tr.badge.textContent = data.passed ? 'Passed' : 'Failed';
+                tr.msgEl.textContent = data.message;
+                if (!data.passed) tr.el.classList.add('expanded');
+                totalTests++;
+                if (data.passed) { passedTests++; resultState[data.store].passCount++; }
+                else { failedTests++; resultState[data.store].failCount++; }
+                updateProgress();
+                allResults.push({
+                  store: data.store, testId: data.testId,
+                  testName: TESTS.find(t => t.id === data.testId)?.name || data.testId,
+                  passed: data.passed, message: data.message,
+                  steps: tr.steps.slice(), screenshots: tr.screenshots.slice(),
+                });
+                break;
+              }
+              case 'store-complete': {
+                const sr = resultState[data.store];
+                if (sr) {
+                  const hasFails = sr.failCount > 0;
+                  sr.statusDot.className = 'result-status ' + (hasFails ? 'fail' : 'pass');
+                  sr.meta.textContent = `${sr.passCount} passed, ${sr.failCount} failed`;
+                }
+                break;
+              }
+              case 'complete': break;
+              case 'error': alert('Error: ' + data.message); break;
+            }
+          }
+        }
+      } catch (err) { alert('Connection error: ' + err.message); }
+
+      btn.disabled = false;
+      btn.classList.remove('running');
+      document.getElementById('progressFill').style.width = '100%';
+      document.getElementById('resultsSubtitle').textContent =
+        failedTests === 0 ? 'All tests passed.' : `${failedTests} test${failedTests === 1 ? '' : 's'} need attention.`;
+      document.getElementById('reminderBar').classList.add('show');
+      document.getElementById('exportBar').classList.add('show');
+    }
+
+    /* ── Export CSV ── */
+    function exportCSV() {
+      if (!allResults.length) return;
+      const rows = ['Store,Test,Status,Message,Steps,Screenshots'];
+      allResults.forEach(r => {
+        const steps = r.steps.join(' → ').replace(/"/g, '""');
+        const screens = r.screenshots.map(s => s.label || s.src).join('; ').replace(/"/g, '""');
+        rows.push(`"${r.store}","${r.testName}","${r.passed ? 'PASS' : 'FAIL'}","${r.message.replace(/"/g, '""')}","${steps}","${screens}"`);
+      });
+      downloadFile(rows.join('\n'), 'follett-qa-results.csv', 'text/csv');
+    }
+
+    /* ── Export HTML ── */
+    function exportHTML() {
+      if (!allResults.length) return;
+      const now = new Date().toLocaleString();
+      const groups = {};
+      allResults.forEach(r => { (groups[r.store] = groups[r.store] || []).push(r); });
+
+      // Convert screenshot images to base64 for self-contained report
+      const convertPromises = [];
+      const base64Cache = {};
+
+      // Build report with inline screenshots
+      let html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Follett QA Report — ${now}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #fff; color: #1d1d1f; }
+
+  .page-header {
+    text-align: center;
+    padding: 48px 40px 32px;
+    border-bottom: 1px solid #e5e5e5;
+    margin-bottom: 40px;
+  }
+  .page-header img { height: 36px; margin-bottom: 16px; }
+  .page-header h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 6px; }
+  .page-header p { color: #86868b; font-size: 14px; }
+
+  .container { max-width: 1000px; margin: 0 auto; padding: 0 40px 80px; }
+
+  .summary-grid {
+    display: flex; gap: 16px; justify-content: center; margin-bottom: 32px;
+  }
+  .summary-card {
+    background: #f5f5f7; border-radius: 14px; padding: 20px 40px; text-align: center; min-width: 140px;
+  }
+  .summary-card .num { font-size: 36px; font-weight: 800; letter-spacing: -1px; }
+  .summary-card .lbl { font-size: 11px; text-transform: uppercase; color: #86868b; font-weight: 700; letter-spacing: 0.5px; margin-top: 2px; }
+  .green { color: #34c759; } .red { color: #ff3b30; }
+
+  .reminder {
+    background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 0 10px 10px 0;
+    padding: 16px 20px; margin-bottom: 36px; font-size: 13px; color: #78570a; line-height: 1.6;
+  }
+  .reminder strong { color: #92400e; }
+
+  .store-section { margin-bottom: 40px; }
+  .store-header {
+    font-size: 20px; font-weight: 800; padding: 16px 20px; background: #f5f5f7;
+    border-radius: 12px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px;
+  }
+  .store-header .store-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .store-header .store-dot.pass { background: #34c759; }
+  .store-header .store-dot.fail { background: #ff3b30; }
+
+  .test-block {
+    border: 1px solid #e5e5e5; border-radius: 12px; margin-bottom: 12px; overflow: hidden;
+  }
+  .test-block-header {
+    padding: 14px 20px; display: flex; align-items: center; gap: 12px;
+    background: #fafafa; border-bottom: 1px solid #e5e5e5;
+  }
+  .test-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .test-dot.pass { background: #34c759; } .test-dot.fail { background: #ff3b30; }
+  .test-name { font-size: 15px; font-weight: 700; flex: 1; }
+  .badge { display: inline-block; padding: 3px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+  .badge.pass { background: #d1fae5; color: #065f46; }
+  .badge.fail { background: #fee2e2; color: #991b1b; }
+
+  .test-body { padding: 16px 20px; }
+  .test-message { font-size: 14px; color: #1d1d1f; line-height: 1.6; margin-bottom: 12px; font-weight: 500; }
+  .test-steps { margin-bottom: 16px; }
+  .test-steps-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #86868b; margin-bottom: 8px; }
+  .step-item { font-size: 13px; color: #48484a; padding: 4px 0 4px 18px; position: relative; line-height: 1.5; }
+  .step-item::before { content: ''; position: absolute; left: 4px; top: 11px; width: 5px; height: 5px; border-radius: 50%; background: #c7c7cc; }
+
+  .screenshots-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #86868b; margin-bottom: 10px; }
+  .screenshot-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+  .screenshot-item { width: 460px; }
+  .screenshot-item img { width: 100%; border-radius: 8px; border: 1px solid #e5e5e5; display: block; }
+  .screenshot-item .sc-caption { font-size: 11px; color: #86868b; margin-top: 6px; font-weight: 500; }
+
+  .footer {
+    text-align: center; margin-top: 48px; padding-top: 24px;
+    border-top: 1px solid #e5e5e5; font-size: 12px; color: #86868b;
+  }
+
+  @media print {
+    body { font-size: 11px; }
+    .test-block { break-inside: avoid; }
+    .screenshot-item { width: 340px; }
+  }
+</style></head><body>
+
+<div class="page-header">
+  <h1>Follett Launch QA Report</h1>
+  <p>Generated ${now} &middot; P3 Media Automation</p>
+</div>
+
+<div class="container">
+  <div class="summary-grid">
+    <div class="summary-card"><div class="num">${totalTests}</div><div class="lbl">Total Tests</div></div>
+    <div class="summary-card"><div class="num green">${passedTests}</div><div class="lbl">Passed</div></div>
+    <div class="summary-card"><div class="num red">${failedTests}</div><div class="lbl">Failed</div></div>
+    <div class="summary-card"><div class="num">${Object.keys(groups).length}</div><div class="lbl">Stores</div></div>
+  </div>
+
+  <div class="reminder">
+    <strong>Reminder:</strong> Automated tests confirm element presence and visibility. Each passed check should be manually verified by a human reviewer before sign-off.
+    Archive this report for auditing purposes.
+  </div>`;
+
+      for (const [store, tests] of Object.entries(groups)) {
+        const storePassed = tests.filter(t => t.passed).length;
+        const storeFailed = tests.filter(t => !t.passed).length;
+        const storeStatus = storeFailed > 0 ? 'fail' : 'pass';
+
+        html += `
+  <div class="store-section">
+    <div class="store-header">
+      <div class="store-dot ${storeStatus}"></div>
+      ${store}
+      <span style="margin-left:auto;font-size:13px;font-weight:500;color:#86868b;">${storePassed} passed, ${storeFailed} failed</span>
+    </div>`;
+
+        tests.forEach(t => {
+          const status = t.passed ? 'pass' : 'fail';
+          html += `
+    <div class="test-block">
+      <div class="test-block-header">
+        <div class="test-dot ${status}"></div>
+        <div class="test-name">${t.testName}</div>
+        <span class="badge ${status}">${t.passed ? 'PASS' : 'FAIL'}</span>
+      </div>
+      <div class="test-body">
+        <div class="test-message">${t.message}</div>`;
+
+          if (t.steps.length) {
+            html += `
+        <div class="test-steps">
+          <div class="test-steps-title">Execution Steps (${t.steps.length})</div>`;
+            t.steps.forEach(s => {
+              html += `<div class="step-item">${s.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+            });
+            html += `</div>`;
+          }
+
+          if (t.screenshots.length) {
+            html += `
+        <div class="screenshots-section">
+          <div class="screenshots-title">Screenshots (${t.screenshots.length})</div>
+          <div class="screenshot-grid">`;
+            t.screenshots.forEach(s => {
+              html += `
+            <div class="screenshot-item">
+              <img src="${location.origin}${s.src}" alt="${s.label}" />
+              <div class="sc-caption">${s.label}</div>
+            </div>`;
+            });
+            html += `</div></div>`;
+          }
+
+          html += `
+      </div>
+    </div>`;
+        });
+
+        html += `</div>`;
+      }
+
+      html += `
+  <div class="footer">
+    P3 Media &middot; Follett Launch QA Automation &middot; ${now}
+  </div>
+</div>
+</body></html>`;
+
+      downloadFile(html, 'follett-qa-report.html', 'text/html');
+    }
+
+    function downloadFile(content, filename, type) {
+      const blob = new Blob([content], { type });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+    /* ── Clock ── */
+    function updateClock() {
+      document.getElementById('clockDisplay').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    updateClock();
+    setInterval(updateClock, 30000);
+  </script>
+</body>
+</html>

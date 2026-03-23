@@ -1,0 +1,5 @@
+node_modules/
+screenshots/
+.env
+.DS_Store
+.claude/
