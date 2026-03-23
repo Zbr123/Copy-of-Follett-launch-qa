@@ -440,6 +440,17 @@
       font-family: 'Inter', sans-serif;
       transition: all 0.2s;
     }
+    .btn-export-pdf {
+      background: #fff;
+      color: #000;
+      font-weight: 700;
+      border-color: #fff;
+    }
+    .btn-export-pdf:hover {
+      background: #e5e5e5;
+      color: #000;
+      border-color: #e5e5e5;
+    }
     .btn-export:hover {
       border-color: #fff;
       color: #fff;
@@ -687,7 +698,8 @@
         </div>
         <div class="export-buttons">
           <button class="btn-export" onclick="exportCSV()">CSV</button>
-          <button class="btn-export" onclick="exportHTML()">Full Report</button>
+          <button class="btn-export" onclick="exportHTML()">HTML Report</button>
+          <button class="btn-export btn-export-pdf" onclick="exportPDF()">PDF Report</button>
         </div>
       </div>
 
@@ -974,6 +986,7 @@
                   testName: TESTS.find(t => t.id === data.testId)?.name || data.testId,
                   passed: data.passed, message: data.message,
                   steps: tr.steps.slice(), screenshots: tr.screenshots.slice(),
+                  checks: data.checks || [],
                 });
                 break;
               }
@@ -1005,13 +1018,52 @@
     /* ── Export CSV ── */
     function exportCSV() {
       if (!allResults.length) return;
-      const rows = ['Store,Test,Status,Message,Steps,Screenshots'];
+      const esc = s => `"${String(s || '').replace(/"/g, '""')}"`;
+      const rows = ['Store,Test,Sub-Check,Status,Detail'];
+
       allResults.forEach(r => {
-        const steps = r.steps.join(' → ').replace(/"/g, '""');
-        const screens = r.screenshots.map(s => s.label || s.src).join('; ').replace(/"/g, '""');
-        rows.push(`"${r.store}","${r.testName}","${r.passed ? 'PASS' : 'FAIL'}","${r.message.replace(/"/g, '""')}","${steps}","${screens}"`);
+        if (r.checks && r.checks.length > 0) {
+          // One row per sub-check for detailed tests
+          r.checks.forEach(c => {
+            rows.push([esc(truncateUrl(r.store)), esc(r.testName), esc(c.name), c.passed ? 'PASS' : 'FAIL', esc(c.detail)].join(','));
+          });
+        } else {
+          // Single row for simple tests
+          rows.push([esc(truncateUrl(r.store)), esc(r.testName), esc('—'), r.passed ? 'PASS' : 'FAIL', esc(r.message)].join(','));
+        }
       });
       downloadFile(rows.join('\n'), 'follett-qa-results.csv', 'text/csv');
+    }
+
+    /* ── Export PDF ── */
+    async function exportPDF() {
+      if (!allResults.length) return;
+      const btn = document.querySelector('.btn-export-pdf');
+      const origText = btn.textContent;
+      btn.textContent = 'Generating...';
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/api/generate-pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            results: allResults,
+            totalTests, passedTests, failedTests,
+          }),
+        });
+        if (!resp.ok) throw new Error('PDF generation failed');
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = resp.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || 'Follett-QA-Report.pdf';
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('PDF generation failed: ' + err.message);
+      }
+      btn.textContent = origText;
+      btn.disabled = false;
     }
 
     /* ── Export HTML ── */
@@ -1090,6 +1142,18 @@
   .step-item { font-size: 13px; color: #48484a; padding: 4px 0 4px 18px; position: relative; line-height: 1.5; }
   .step-item::before { content: ''; position: absolute; left: 4px; top: 11px; width: 5px; height: 5px; border-radius: 50%; background: #c7c7cc; }
 
+  .checks-section { margin-bottom: 16px; }
+  .checks-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #86868b; margin-bottom: 10px; }
+  .checks-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .checks-table th { text-align: left; padding: 8px 12px; background: #f5f5f7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #86868b; font-weight: 700; border-bottom: 1px solid #e5e5e5; }
+  .checks-table td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+  .check-row.fail td { background: #fff5f5; }
+  .check-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .check-dot.pass { background: #34c759; }
+  .check-dot.fail { background: #ff3b30; }
+  .check-name { font-weight: 600; }
+  .check-detail { color: #48484a; }
+
   .screenshots-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #86868b; margin-bottom: 10px; }
   .screenshot-grid { display: flex; flex-wrap: wrap; gap: 12px; }
   .screenshot-item { width: 460px; }
@@ -1135,7 +1199,7 @@
   <div class="store-section">
     <div class="store-header">
       <div class="store-dot ${storeStatus}"></div>
-      ${store}
+      ${truncateUrl(store)}
       <span style="margin-left:auto;font-size:13px;font-weight:500;color:#86868b;">${storePassed} passed, ${storeFailed} failed</span>
     </div>`;
 
@@ -1150,6 +1214,28 @@
       </div>
       <div class="test-body">
         <div class="test-message">${t.message}</div>`;
+
+          // Sub-checks table
+          if (t.checks && t.checks.length > 0) {
+            const checksPassed = t.checks.filter(c => c.passed).length;
+            const checksFailed = t.checks.filter(c => !c.passed).length;
+            html += `
+        <div class="checks-section">
+          <div class="checks-title">Sub-Checks (${checksPassed} passed, ${checksFailed} failed)</div>
+          <table class="checks-table">
+            <thead><tr><th>Status</th><th>Check</th><th>Detail</th></tr></thead>
+            <tbody>`;
+            t.checks.forEach(c => {
+              const cs = c.passed ? 'pass' : 'fail';
+              html += `
+              <tr class="check-row ${cs}">
+                <td><span class="check-dot ${cs}"></span>${c.passed ? 'PASS' : 'FAIL'}</td>
+                <td class="check-name">${(c.name || '').replace(/</g, '&lt;')}</td>
+                <td class="check-detail">${(c.detail || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
+              </tr>`;
+            });
+            html += `</tbody></table></div>`;
+          }
 
           if (t.steps.length) {
             html += `
@@ -1192,6 +1278,10 @@
 </body></html>`;
 
       downloadFile(html, 'follett-qa-report.html', 'text/html');
+    }
+
+    function truncateUrl(s) {
+      try { return new URL(s.startsWith('http') ? s : `https://${s}`).hostname; } catch (_) { return s.replace(/[?#].*$/, '').replace(/\/.*$/, ''); }
     }
 
     function downloadFile(content, filename, type) {

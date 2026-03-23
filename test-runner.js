@@ -595,16 +595,13 @@ async function testRentalCollateral(page, store, emit) {
 
   emit({ step: `Recurring subtotal: ${hasRecurringSubtotal}, Rental Collateral: ${hasCollateralOnCheckout}, Rental login message: ${hasRentalLoginMessage}` });
 
-  const checkoutIssues = [];
-  if (!hasRecurringSubtotal) {
-    checkoutIssues.push('"Recurring subtotal" not found on checkout page');
-  }
-  if (!hasCollateralOnCheckout) {
-    checkoutIssues.push('"Rental Collateral" not found on checkout page');
-  }
-  if (!hasRentalLoginMessage) {
-    checkoutIssues.push('"You must be logged in to purchase rental items. Please log in to continue." message not found on checkout page');
-  }
+  const rentalChecks = [
+    { name: 'Recurring Subtotal', passed: hasRecurringSubtotal, detail: hasRecurringSubtotal ? 'Found on checkout page' : 'Not found on checkout page' },
+    { name: 'Rental Collateral', passed: hasCollateralOnCheckout, detail: hasCollateralOnCheckout ? 'Found on checkout page' : 'Not found on checkout page' },
+    { name: 'Rental Login Message', passed: hasRentalLoginMessage, detail: hasRentalLoginMessage ? 'Message displayed on checkout' : 'Message not found on checkout page' },
+  ];
+
+  const checkoutIssues = rentalChecks.filter(c => !c.passed).map(c => `"${c.name}" not found on checkout page`);
 
   if (checkoutIssues.length > 0) {
     // Scroll down and take another screenshot in case content is below fold
@@ -614,7 +611,7 @@ async function testRentalCollateral(page, store, emit) {
     await page.screenshot({ path: checkoutShot2, fullPage: false });
     emit({ screenshot: screenshotUrl(checkoutShot2), label: 'Checkout page (scrolled)' });
 
-    return { passed: false, message: `Checkout validation failed: ${checkoutIssues.join('; ')}` };
+    return { passed: false, message: `Checkout validation failed: ${checkoutIssues.join('; ')}`, checks: rentalChecks };
   }
 
   emit({ step: 'Checkout validated — recurring subtotal, Rental Collateral, and rental login message all present' });
@@ -622,6 +619,7 @@ async function testRentalCollateral(page, store, emit) {
   return {
     passed: true,
     message: `Rental flow complete. Cart: ${bagCount} items (${cartItemNames.join(', ')}). Checkout has recurring subtotal, Rental Collateral, and rental login message.`,
+    checks: rentalChecks,
   };
 }
 
@@ -888,13 +886,12 @@ async function testDigitalDeliveryFee(page, store, emit) {
     ? normalizedPage.includes(productSnippet)
     : true;
 
-  const checkoutIssues = [];
-  if (!hasFeeOnCheckout) {
-    checkoutIssues.push('"Digital Delivery Fee" not found on checkout page');
-  }
-  if (!hasProductOnCheckout) {
-    checkoutIssues.push(`Product "${addedProductName}" not found on checkout page`);
-  }
+  const digitalChecks = [
+    { name: 'Digital Delivery Fee', passed: hasFeeOnCheckout, detail: hasFeeOnCheckout ? 'Found on checkout page' : 'Not found on checkout page' },
+    { name: 'Product on Checkout', passed: hasProductOnCheckout, detail: hasProductOnCheckout ? `"${addedProductName}" found on checkout` : `"${addedProductName}" not found on checkout page` },
+  ];
+
+  const checkoutIssues = digitalChecks.filter(c => !c.passed).map(c => c.detail);
 
   if (checkoutIssues.length > 0) {
     await page.evaluate(() => window.scrollBy(0, 500));
@@ -903,7 +900,7 @@ async function testDigitalDeliveryFee(page, store, emit) {
     await page.screenshot({ path: checkoutShot2, fullPage: false });
     emit({ screenshot: screenshotUrl(checkoutShot2), label: 'Checkout page (scrolled)' });
 
-    return { passed: false, message: `Checkout validation failed: ${checkoutIssues.join('; ')}` };
+    return { passed: false, message: `Checkout validation failed: ${checkoutIssues.join('; ')}`, checks: digitalChecks };
   }
 
   emit({ step: 'Checkout validated — Digital Delivery Fee and product both present' });
@@ -911,6 +908,7 @@ async function testDigitalDeliveryFee(page, store, emit) {
   return {
     passed: true,
     message: `Digital delivery flow complete. Cart: ${bagCount} items. Digital Delivery Fee: ${deliveryFeePrice}. Both items confirmed on checkout.`,
+    checks: digitalChecks,
   };
 }
 
@@ -1242,15 +1240,28 @@ async function testCheckoutValidation(page, store, emit) {
     issues.push('Disclaimer is not positioned above the "Pay Now" button');
   }
 
+  // Build structured checks for export
+  const checkoutChecks = [
+    { name: 'Financial Aid Placement', passed: !issues.some(i => i.includes('Financial Aid')), detail: financialAid ? `Found — position correct after Contact & Shipping` : 'Section NOT found on checkout' },
+    { name: 'First Name Required', passed: !issues.some(i => i.includes('First Name')), detail: fieldAnalysis.firstNameLabel ? (fieldAnalysis.firstNameHasOptional ? `Has "(optional)" — should be required` : `Label: "${fieldAnalysis.firstNameLabel}" — required`) : 'Field not found' },
+    { name: 'Phone Required', passed: !issues.some(i => i.includes('Phone')), detail: fieldAnalysis.phoneLabel ? (fieldAnalysis.phoneIsRequired ? `Label: "${fieldAnalysis.phoneLabel}" — required` : `Has "optional" label — should be required`) : 'Field not found' },
+    { name: 'Disclaimer Text', passed: disclaimerCheck.hasAgreement, detail: disclaimerCheck.hasAgreement ? 'Agreement text found' : 'Missing "By proceeding, I agree to Follett\'s..." text' },
+    { name: 'Terms of Use Link', passed: disclaimerCheck.hasTermsOfUse && disclaimerCheck.hasTermsLink, detail: disclaimerCheck.hasTermsOfUse ? (disclaimerCheck.hasTermsLink ? 'Linked correctly' : 'Text found but not a link') : 'Not found in disclaimer' },
+    { name: 'Privacy Policy Link', passed: disclaimerCheck.hasPrivacyPolicy && disclaimerCheck.hasPrivacyLink, detail: disclaimerCheck.hasPrivacyPolicy ? (disclaimerCheck.hasPrivacyLink ? 'Linked correctly' : 'Text found but not a link') : 'Not found in disclaimer' },
+    { name: 'Cookie Policy Link', passed: disclaimerCheck.hasCookiePolicy && disclaimerCheck.hasCookieLink, detail: disclaimerCheck.hasCookiePolicy ? (disclaimerCheck.hasCookieLink ? 'Linked correctly' : 'Text found but not a link') : 'Not found in disclaimer' },
+    { name: 'Disclaimer Position', passed: !disclaimerCheck.hasAgreement || disclaimerCheck.disclaimerAbovePayNow, detail: disclaimerCheck.disclaimerAbovePayNow ? 'Above Pay Now button' : 'Not positioned above Pay Now button' },
+  ];
+
   if (issues.length > 0) {
     emit({ step: `Validation failed: ${issues.join('; ')}` });
-    return { passed: false, message: issues.join('; ') };
+    return { passed: false, message: issues.join('; '), checks: checkoutChecks };
   }
 
   emit({ step: 'All checkout validations passed' });
   return {
     passed: true,
     message: `Financial Aid placement correct ✓. First Name: not optional ✓. Phone: required ✓. Follett disclaimer with linked Terms/Privacy/Cookie above Pay Now ✓. Section order: ${sectionOrder.map(s => s.name).join(' → ')}`,
+    checks: checkoutChecks,
   };
 }
 
@@ -1978,6 +1989,7 @@ async function testPageContentMigration(page, store, emit) {
     message: allPassed
       ? `All ${TOTAL_CHECKS} content migration checks passed (${country} store).`
       : `${failedCount}/${TOTAL_CHECKS} checks failed: ${failedNames.join('; ')}`,
+    checks,
   };
 }
 
@@ -2356,6 +2368,7 @@ async function testHomepagePlpPdp(page, store, emit) {
     message: allPassed
       ? `All ${TOTAL_CHECKS} Homepage/PLP/PDP checks passed.`
       : `${failedCount}/${TOTAL_CHECKS} checks failed: ${failedNames.join('; ')}`,
+    checks,
   };
 }
 
