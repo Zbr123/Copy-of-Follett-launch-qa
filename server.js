@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const { runTests } = require('./test-runner');
+const { runAccessibilityScan } = require('./accessibility-scanner');
 const { chromium } = require('playwright');
 
 const app = express();
@@ -88,6 +89,235 @@ app.post('/api/run-tests', async (req, res) => {
   }
 
   res.end();
+});
+
+// ── Accessibility scan SSE endpoint ──
+app.post('/api/accessibility-scan', async (req, res) => {
+  const { stores } = req.body;
+  if (!stores || !stores.length) return res.status(400).json({ error: 'No stores provided' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendEvent = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    await runAccessibilityScan(stores, sendEvent);
+    sendEvent({ type: 'ada-complete' });
+  } catch (err) {
+    sendEvent({ type: 'ada-error', message: err.message });
+  }
+
+  res.end();
+});
+
+// ── Accessibility PDF Report ──
+app.post('/api/accessibility-pdf', async (req, res) => {
+  const { results } = req.body;
+  if (!results || !Object.keys(results).length) return res.status(400).json({ error: 'No results' });
+
+  let logoBase64 = '';
+  try {
+    const logoBuf = fs.readFileSync(path.join(__dirname, 'public', 'p3-logo.png'));
+    logoBase64 = `data:image/png;base64,${logoBuf.toString('base64')}`;
+  } catch (_) {}
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const truncateUrl = s => {
+    try { return new URL(s.startsWith('http') ? s : `https://${s}`).hostname; } catch (_) { return s; }
+  };
+
+  // Aggregate stats
+  let totalViolations = 0, totalCritical = 0, totalSerious = 0, totalModerate = 0, totalMinor = 0, totalPasses = 0;
+  const storeCount = Object.keys(results).length;
+
+  for (const [store, data] of Object.entries(results)) {
+    for (const page of (data.pages || [])) {
+      const s = page.summary || {};
+      totalViolations += s.total || 0;
+      totalCritical += s.critical || 0;
+      totalSerious += s.serious || 0;
+      totalModerate += s.moderate || 0;
+      totalMinor += s.minor || 0;
+      totalPasses += s.passes || 0;
+    }
+  }
+
+  let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif; color: #1d1d1f; font-size: 10px; line-height: 1.5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  .cover { width: 210mm; height: 297mm; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #000; color: #fff; page-break-after: always; position: relative; }
+  .cover-logo { width: 72px; height: 72px; margin-bottom: 40px; border-radius: 16px; filter: invert(1); }
+  .cover-title { font-size: 42px; font-weight: 800; letter-spacing: -1.5px; margin-bottom: 8px; }
+  .cover-subtitle { font-size: 16px; font-weight: 400; color: rgba(255,255,255,0.5); margin-bottom: 60px; }
+  .cover-meta { font-size: 13px; color: rgba(255,255,255,0.35); }
+  .cover-stats { display: flex; gap: 36px; margin-bottom: 48px; }
+  .cover-stat { text-align: center; }
+  .cover-stat .val { font-size: 48px; font-weight: 800; letter-spacing: -2px; }
+  .cover-stat .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.4); margin-top: 4px; }
+
+  .page { width: 210mm; min-height: 297mm; padding: 24mm 20mm 20mm 20mm; page-break-after: always; position: relative; }
+  .page:last-child { page-break-after: auto; }
+  .page-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; margin-bottom: 20px; border-bottom: 0.5px solid #d2d2d7; }
+  .page-header-left { display: flex; align-items: center; gap: 8px; }
+  .page-header-logo { width: 18px; height: 18px; border-radius: 4px; }
+  .page-header-text { font-size: 9px; font-weight: 600; color: #86868b; text-transform: uppercase; letter-spacing: 1px; }
+  .page-header-date { font-size: 9px; color: #86868b; }
+
+  .section-title { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 24px; }
+
+  .summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 28px; }
+  .summary-card { background: #f5f5f7; border-radius: 12px; padding: 16px; text-align: center; }
+  .summary-card .num { font-size: 28px; font-weight: 800; letter-spacing: -1px; }
+  .summary-card .lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: #86868b; font-weight: 700; margin-top: 2px; }
+  .critical { color: #ff3b30; } .serious { color: #ff9f0a; } .moderate { color: #ffd60a; } .minor-c { color: #007aff; } .green { color: #34c759; }
+
+  .store-title { font-size: 20px; font-weight: 800; padding-bottom: 8px; border-bottom: 2px solid #1d1d1f; margin-bottom: 16px; }
+  .page-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; background: #f5f5f7; padding: 10px 14px; border-radius: 8px; }
+
+  .violation { border: 0.5px solid #d2d2d7; border-radius: 8px; margin-bottom: 10px; overflow: hidden; page-break-inside: avoid; }
+  .violation-header { padding: 10px 14px; display: flex; align-items: flex-start; gap: 10px; background: #fafafa; border-bottom: 0.5px solid #e5e5ea; }
+  .impact-badge { font-size: 8px; font-weight: 800; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.3px; flex-shrink: 0; }
+  .impact-badge.critical { background: #ff3b30; color: #fff; }
+  .impact-badge.serious { background: #ff9f0a; color: #000; }
+  .impact-badge.moderate { background: #ffd60a; color: #000; }
+  .impact-badge.minor { background: #007aff; color: #fff; }
+  .v-title { font-size: 11px; font-weight: 700; }
+  .v-desc { font-size: 10px; color: #86868b; margin-top: 2px; }
+  .v-count { font-size: 10px; color: #86868b; flex-shrink: 0; }
+
+  .violation-body { padding: 12px 14px; }
+  .fix-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; }
+  .fix-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #16a34a; margin-bottom: 4px; }
+  .fix-text { font-size: 10px; color: #166534; line-height: 1.6; }
+
+  .element-box { background: #fafafa; border: 0.5px solid #e5e5ea; border-radius: 4px; padding: 8px 10px; margin-bottom: 6px; font-size: 9px; }
+  .el-label { font-size: 8px; font-weight: 700; text-transform: uppercase; color: #86868b; margin-bottom: 2px; }
+  .el-html { font-family: 'SF Mono', Monaco, monospace; color: #c2410c; word-break: break-all; font-size: 9px; }
+  .el-selector { font-family: 'SF Mono', Monaco, monospace; color: #2563eb; word-break: break-all; font-size: 9px; }
+
+  .wcag-tags { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
+  .wcag-tag { font-size: 8px; font-weight: 700; padding: 2px 6px; border-radius: 3px; background: #e5e5ea; color: #86868b; text-transform: uppercase; }
+
+  .page-footer { position: absolute; bottom: 12mm; left: 20mm; right: 20mm; display: flex; justify-content: space-between; font-size: 8px; color: #c7c7cc; border-top: 0.5px solid #e5e5ea; padding-top: 8px; }
+
+  .disclaimer { background: #fffbeb; border-left: 3px solid #f59e0b; border-radius: 0 8px 8px 0; padding: 12px 16px; margin-bottom: 24px; font-size: 10px; color: #78570a; line-height: 1.6; }
+</style></head><body>`;
+
+  // Cover page
+  html += `
+  <div class="cover">
+    ${logoBase64 ? `<img class="cover-logo" src="${logoBase64}" />` : ''}
+    <div class="cover-title">Accessibility Audit</div>
+    <div class="cover-subtitle">WCAG 2.1 AA Compliance Report</div>
+    <div class="cover-stats">
+      <div class="cover-stat"><div class="val" style="color:#ff453a">${totalCritical}</div><div class="lbl">Critical</div></div>
+      <div class="cover-stat"><div class="val" style="color:#ff9f0a">${totalSerious}</div><div class="lbl">Serious</div></div>
+      <div class="cover-stat"><div class="val" style="color:#ffd60a">${totalModerate}</div><div class="lbl">Moderate</div></div>
+      <div class="cover-stat"><div class="val" style="color:#64d2ff">${totalMinor}</div><div class="lbl">Minor</div></div>
+      <div class="cover-stat"><div class="val" style="color:#30d158">${totalPasses}</div><div class="lbl">Passed</div></div>
+    </div>
+    <div class="cover-meta">${dateStr} at ${timeStr} &middot; P3 Media</div>
+  </div>`;
+
+  // Summary page
+  html += `
+  <div class="page">
+    <div class="page-header">
+      <div class="page-header-left">${logoBase64 ? `<img class="page-header-logo" src="${logoBase64}" />` : ''}<span class="page-header-text">Accessibility Audit</span></div>
+      <span class="page-header-date">${dateStr}</span>
+    </div>
+    <div class="section-title">Executive Summary</div>
+    <div class="summary-grid">
+      <div class="summary-card"><div class="num">${storeCount}</div><div class="lbl">Stores</div></div>
+      <div class="summary-card"><div class="num critical">${totalCritical}</div><div class="lbl">Critical</div></div>
+      <div class="summary-card"><div class="num serious">${totalSerious}</div><div class="lbl">Serious</div></div>
+      <div class="summary-card"><div class="num moderate">${totalModerate}</div><div class="lbl">Moderate</div></div>
+      <div class="summary-card"><div class="num green">${totalPasses}</div><div class="lbl">Rules Passed</div></div>
+    </div>
+    <div class="disclaimer">
+      <strong>Action Required:</strong> Critical and serious violations must be fixed before launch. Each violation includes the affected HTML element, CSS selector for locating it, and specific remediation guidance. Moderate and minor issues should be addressed in subsequent sprints.
+    </div>
+    <div class="page-footer"><span>P3 Media &middot; Confidential</span><span>WCAG 2.1 AA Accessibility Audit</span></div>
+  </div>`;
+
+  // Per-store pages
+  for (const [store, data] of Object.entries(results)) {
+    for (const page of (data.pages || [])) {
+      if (!page.violations || !page.violations.length) continue;
+
+      html += `
+      <div class="page">
+        <div class="page-header">
+          <div class="page-header-left">${logoBase64 ? `<img class="page-header-logo" src="${logoBase64}" />` : ''}<span class="page-header-text">Accessibility Audit</span></div>
+          <span class="page-header-date">${dateStr}</span>
+        </div>
+        <div class="store-title">${esc(truncateUrl(store))} — ${esc(page.page)}</div>`;
+
+      page.violations.forEach(v => {
+        const wcagTags = (v.wcagTags || []).map(t => `<span class="wcag-tag">${t}</span>`).join('');
+        const nodesHtml = (v.nodes || []).slice(0, 5).map(n => `
+          <div class="element-box">
+            <div class="el-label">HTML</div>
+            <div class="el-html">${esc(n.html)}</div>
+            <div class="el-label" style="margin-top:4px">Selector</div>
+            <div class="el-selector">${esc(n.target)}</div>
+          </div>
+        `).join('');
+
+        html += `
+        <div class="violation">
+          <div class="violation-header">
+            <span class="impact-badge ${v.impact}">${v.impact}</span>
+            <div style="flex:1">
+              <div class="v-title">${esc(v.help)}</div>
+              <div class="v-desc">${esc(v.description)}</div>
+            </div>
+            <span class="v-count">${(v.nodes || []).length} instances</span>
+          </div>
+          <div class="violation-body">
+            <div class="fix-box">
+              <div class="fix-label">How to Fix</div>
+              <div class="fix-text">${esc(v.fixGuidance)}</div>
+            </div>
+            <div class="wcag-tags">${wcagTags}</div>
+            ${nodesHtml}
+          </div>
+        </div>`;
+      });
+
+      html += `
+        <div class="page-footer"><span>P3 Media &middot; Confidential</span><span>WCAG 2.1 AA Accessibility Audit</span></div>
+      </div>`;
+    }
+  }
+
+  html += '</body></html>';
+
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const pg = await browser.newPage();
+    await pg.setContent(html, { waitUntil: 'networkidle' });
+    const pdfBuffer = await pg.pdf({ format: 'A4', margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' }, printBackground: true });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Accessibility-Audit-${now.toISOString().slice(0,10)}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (browser) await browser.close();
+  }
 });
 
 // ── Scheduled runs ──
