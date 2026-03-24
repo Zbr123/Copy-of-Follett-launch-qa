@@ -76,6 +76,11 @@ const TEST_REGISTRY = {
     description: 'Navigate to Textbooks, select Term/Dept/Course/Section, add courses, verify results, add to cart (5 attempts)',
     run: testCourseMaterials,
   },
+  'inventory': {
+    name: 'Inventory',
+    description: 'Spot check for out-of-stock products across 5 categories (10 checks) + validate 10 navigation links',
+    run: testInventory,
+  },
 };
 
 function screenshotPath(storeName, testId, suffix) {
@@ -1240,6 +1245,121 @@ async function testCheckoutValidation(page, store, emit) {
     issues.push('Disclaimer is not positioned above the "Pay Now" button');
   }
 
+  // ── CHECK D: Email Marketing Checkbox (US vs Canada compliance) ──
+  emit({ step: 'Checking email marketing checkbox compliance...' });
+
+  // Determine if store is US or Canada by checking footer address
+  const storeCountry = await page.evaluate((storeOrigin) => {
+    // First try to find address in footer from the main page (we may be on checkout now)
+    // Check the checkout page itself for location clues
+    const bodyText = document.body.innerText;
+
+    // Canadian provinces
+    const canadianPatterns = /\b(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT|Alberta|British Columbia|Manitoba|New Brunswick|Newfoundland|Nova Scotia|Northwest Territories|Nunavut|Ontario|Prince Edward Island|Quebec|Saskatchewan|Yukon)\b/;
+    // Canadian postal code pattern
+    const canadianPostal = /[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d/;
+    // Check for "Canada" explicitly
+    const hasCanada = /\bCanada\b/i.test(bodyText);
+
+    return (hasCanada || canadianPostal.test(bodyText)) ? 'CA' : 'US';
+  }, origin);
+
+  // Also check the homepage footer for more reliable country detection
+  let footerCountry = null;
+  try {
+    const newPage = await page.context().newPage();
+    await newPage.goto(origin, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await newPage.waitForTimeout(2000);
+    footerCountry = await newPage.evaluate(() => {
+      const footer = document.querySelector('footer');
+      if (!footer) return null;
+      const footerText = footer.innerText;
+      const canadianPostal = /[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d/;
+      const hasCanada = /\bCanada\b/i.test(footerText);
+      const canadianProvinces = /\b(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\b/;
+      if (hasCanada || canadianPostal.test(footerText)) return 'CA';
+      // US zip code pattern (5 digits or 5+4)
+      if (/\b\d{5}(-\d{4})?\b/.test(footerText)) return 'US';
+      return null;
+    });
+    await newPage.close();
+  } catch (_) {}
+
+  const country = footerCountry || storeCountry;
+  emit({ step: `Store detected as: ${country === 'CA' ? 'Canada' : 'US'} (footer: ${footerCountry || 'unknown'}, checkout: ${storeCountry})` });
+
+  // Now check the email marketing checkbox on checkout
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(500);
+
+  const emailCheckboxState = await page.evaluate(() => {
+    // Look for the "Email me with news and offers" checkbox
+    const allLabels = document.querySelectorAll('label');
+    for (const label of allLabels) {
+      const text = (label.textContent || '').trim();
+      if (/email\s*me\s*with\s*news/i.test(text)) {
+        const checkbox = label.querySelector('input[type="checkbox"]') ||
+          document.getElementById(label.getAttribute('for'));
+        return {
+          exists: true,
+          checked: checkbox ? checkbox.checked : null,
+          text: text,
+        };
+      }
+    }
+    // Also check by input attributes
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    for (const cb of checkboxes) {
+      const id = cb.id || '';
+      const name = cb.name || '';
+      const ariaLabel = cb.getAttribute('aria-label') || '';
+      if (/marketing|newsletter|email.*news/i.test(id + name + ariaLabel)) {
+        const label = cb.closest('label') || document.querySelector(`label[for="${cb.id}"]`);
+        return {
+          exists: true,
+          checked: cb.checked,
+          text: label ? label.textContent.trim() : ariaLabel || name,
+        };
+      }
+    }
+    return { exists: false, checked: null, text: null };
+  });
+
+  const emailShot = screenshotPath(store.newStore, 'checkout-validation', '05_email_marketing');
+  await page.screenshot({ path: emailShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(emailShot), label: 'Email marketing checkbox area' });
+
+  let emailCheckPassed = false;
+  let emailCheckDetail = '';
+
+  if (country === 'US') {
+    // US: checkbox should NOT exist (CAN-SPAM compliance)
+    if (!emailCheckboxState.exists) {
+      emailCheckPassed = true;
+      emailCheckDetail = 'US store: "Email me with news and offers" checkbox correctly absent';
+    } else {
+      emailCheckPassed = false;
+      emailCheckDetail = `US store: "Email me with news and offers" checkbox should NOT exist (found: "${emailCheckboxState.text}", checked: ${emailCheckboxState.checked})`;
+      issues.push(emailCheckDetail);
+    }
+  } else {
+    // Canada: checkbox should exist but be UNCHECKED (CASL compliance)
+    if (!emailCheckboxState.exists) {
+      emailCheckPassed = false;
+      emailCheckDetail = 'Canada store: "Email me with news and offers" checkbox NOT found — should exist but be unchecked (CASL)';
+      issues.push(emailCheckDetail);
+    } else if (emailCheckboxState.checked) {
+      emailCheckPassed = false;
+      emailCheckDetail = `Canada store: "Email me with news and offers" checkbox is checked — must be unchecked by default (CASL). Text: "${emailCheckboxState.text}"`;
+      issues.push(emailCheckDetail);
+    } else {
+      emailCheckPassed = true;
+      emailCheckDetail = `Canada store: "Email me with news and offers" checkbox exists and is unchecked — correct (CASL). Text: "${emailCheckboxState.text}"`;
+    }
+  }
+
+  emit({ step: `✅ Email marketing check: ${emailCheckDetail}` });
+
   // Build structured checks for export
   const checkoutChecks = [
     { name: 'Financial Aid Placement', passed: !issues.some(i => i.includes('Financial Aid')), detail: financialAid ? `Found — position correct after Contact & Shipping` : 'Section NOT found on checkout' },
@@ -1250,6 +1370,7 @@ async function testCheckoutValidation(page, store, emit) {
     { name: 'Privacy Policy Link', passed: disclaimerCheck.hasPrivacyPolicy && disclaimerCheck.hasPrivacyLink, detail: disclaimerCheck.hasPrivacyPolicy ? (disclaimerCheck.hasPrivacyLink ? 'Linked correctly' : 'Text found but not a link') : 'Not found in disclaimer' },
     { name: 'Cookie Policy Link', passed: disclaimerCheck.hasCookiePolicy && disclaimerCheck.hasCookieLink, detail: disclaimerCheck.hasCookiePolicy ? (disclaimerCheck.hasCookieLink ? 'Linked correctly' : 'Text found but not a link') : 'Not found in disclaimer' },
     { name: 'Disclaimer Position', passed: !disclaimerCheck.hasAgreement || disclaimerCheck.disclaimerAbovePayNow, detail: disclaimerCheck.disclaimerAbovePayNow ? 'Above Pay Now button' : 'Not positioned above Pay Now button' },
+    { name: 'Email Marketing Compliance', passed: emailCheckPassed, detail: emailCheckDetail },
   ];
 
   if (issues.length > 0) {
@@ -1260,7 +1381,7 @@ async function testCheckoutValidation(page, store, emit) {
   emit({ step: 'All checkout validations passed' });
   return {
     passed: true,
-    message: `Financial Aid placement correct ✓. First Name: not optional ✓. Phone: required ✓. Follett disclaimer with linked Terms/Privacy/Cookie above Pay Now ✓. Section order: ${sectionOrder.map(s => s.name).join(' → ')}`,
+    message: `Financial Aid placement correct ✓. First Name: not optional ✓. Phone: required ✓. Follett disclaimer with linked Terms/Privacy/Cookie above Pay Now ✓. Email marketing compliance (${country === 'CA' ? 'Canada/CASL' : 'US/CAN-SPAM'}) ✓. Section order: ${sectionOrder.map(s => s.name).join(' → ')}`,
     checks: checkoutChecks,
   };
 }
@@ -3065,6 +3186,309 @@ async function runStoreTests(browser, store, testIds, sendEvent) {
 
   await context.close();
   sendEvent({ type: 'store-complete', store: store.newStore });
+}
+
+// ─── Inventory test ─────────────────────────────────────────────────
+
+async function testInventory(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  const checks = [];
+  let checkNum = 0;
+
+  function record(name, passed, detail) {
+    checkNum++;
+    checks.push({ name, passed, detail });
+    emit({ step: `[${checkNum}] ${passed ? '✅' : '❌'} ${name}: ${detail}` });
+  }
+
+  // ── CHECK 1: Out-of-stock spot check across 5 random categories ──
+  emit({ step: 'Finding collection/category pages from navigation...' });
+
+  // Get all collection links from nav (exclude textbooks)
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const collectionLinks = await page.evaluate(() => {
+    const links = [];
+    const seen = new Set();
+    const allLinks = document.querySelectorAll('a[href*="/collections/"]');
+
+    for (const a of allLinks) {
+      const href = (a.getAttribute('href') || '').split('?')[0];
+      const text = (a.textContent || '').trim();
+
+      // Skip textbooks, course materials, and duplicates
+      if (/textbook|course\s*material/i.test(text)) continue;
+      if (/textbook|course-material/i.test(href)) continue;
+      if (href.includes('/collections/all')) continue;
+      if (seen.has(href)) continue;
+
+      // Must be visible
+      if (a.offsetParent === null || a.offsetWidth === 0) continue;
+
+      seen.add(href);
+      links.push({ href, text: text.substring(0, 50) });
+    }
+
+    return links;
+  });
+
+  emit({ step: `Found ${collectionLinks.length} category links (excluding textbooks)` });
+
+  // Pick up to 5 random categories
+  const shuffled = collectionLinks.sort(() => Math.random() - 0.5);
+  const categoriesToCheck = shuffled.slice(0, 5);
+  let outOfStockIssues = 0;
+  let productsChecked = 0;
+
+  for (let i = 0; i < categoriesToCheck.length; i++) {
+    const cat = categoriesToCheck[i];
+    const catUrl = cat.href.startsWith('http') ? cat.href : `${origin}${cat.href}`;
+    emit({ step: `Checking category ${i + 1}/5: "${cat.text}" → ${cat.href}` });
+
+    try {
+      await page.goto(catUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(2000);
+
+      const catShot = screenshotPath(store.newStore, 'inventory', `01_cat_${i + 1}`);
+      await page.screenshot({ path: catShot, fullPage: false });
+      emit({ screenshot: screenshotUrl(catShot), label: `Category: ${cat.text}` });
+
+      // Check products on this page for out-of-stock indicators
+      const productStatus = await page.evaluate(() => {
+        const products = [];
+        // Look for product cards/items
+        const productCards = document.querySelectorAll(
+          '[class*="product-card"], [class*="product-item"], [class*="grid-item"], ' +
+          '[class*="ProductCard"], [class*="product_card"], .product, .grid__item'
+        );
+
+        for (const card of productCards) {
+          const text = (card.textContent || '').trim();
+          const title = card.querySelector('a[href*="/products/"]');
+          const titleText = title ? (title.textContent || '').trim() : '';
+
+          // Check for out-of-stock indicators
+          const isOutOfStock =
+            /sold\s*out/i.test(text) ||
+            /out\s*of\s*stock/i.test(text) ||
+            /unavailable/i.test(text) ||
+            card.querySelector('[class*="sold-out"], [class*="soldout"], [class*="out-of-stock"]') !== null;
+
+          if (titleText || text.length > 5) {
+            products.push({
+              title: titleText.substring(0, 80) || text.substring(0, 80),
+              outOfStock: isOutOfStock,
+            });
+          }
+        }
+
+        return products;
+      });
+
+      const outOfStock = productStatus.filter(p => p.outOfStock);
+      const checkedCount = Math.min(productStatus.length, 2); // Count 2 checks per category
+      productsChecked += checkedCount;
+
+      if (outOfStock.length > 0) {
+        outOfStockIssues += outOfStock.length;
+        record(
+          `Category "${cat.text}" Stock`,
+          false,
+          `${outOfStock.length} out-of-stock product(s) displaying: ${outOfStock.map(p => `"${p.title}"`).join(', ')}`
+        );
+      } else if (productStatus.length === 0) {
+        record(
+          `Category "${cat.text}" Stock`,
+          true,
+          `No product cards found on this page (may be a landing page)`
+        );
+      } else {
+        record(
+          `Category "${cat.text}" Stock`,
+          true,
+          `${productStatus.length} products displayed — none out of stock`
+        );
+      }
+    } catch (err) {
+      record(`Category "${cat.text}" Stock`, false, `Failed to load category page: ${err.message}`);
+    }
+  }
+
+  // If we didn't find 5 categories, fill in with direct collection checks
+  if (categoriesToCheck.length < 5) {
+    const fallbackCollections = ['new-arrivals', 'men', 'women', 'gifts', 'headwear', 'accessories', 'drinkware', 'sale'];
+    const remaining = 5 - categoriesToCheck.length;
+    const usedPaths = new Set(categoriesToCheck.map(c => c.href));
+    let fallbackCount = 0;
+
+    for (const coll of fallbackCollections) {
+      if (fallbackCount >= remaining) break;
+      const collPath = `/collections/${coll}`;
+      if (usedPaths.has(collPath)) continue;
+
+      emit({ step: `Trying fallback category: ${coll}` });
+      try {
+        const response = await page.goto(`${origin}${collPath}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        if (response && response.status() < 400) {
+          await page.waitForTimeout(1500);
+
+          const productStatus = await page.evaluate(() => {
+            const products = [];
+            const productCards = document.querySelectorAll(
+              '[class*="product-card"], [class*="product-item"], [class*="grid-item"], ' +
+              '[class*="ProductCard"], [class*="product_card"], .product, .grid__item'
+            );
+            for (const card of productCards) {
+              const text = (card.textContent || '').trim();
+              const title = card.querySelector('a[href*="/products/"]');
+              const titleText = title ? (title.textContent || '').trim() : '';
+              const isOutOfStock =
+                /sold\s*out/i.test(text) || /out\s*of\s*stock/i.test(text) || /unavailable/i.test(text) ||
+                card.querySelector('[class*="sold-out"], [class*="soldout"], [class*="out-of-stock"]') !== null;
+              if (titleText || text.length > 5) {
+                products.push({ title: titleText.substring(0, 80) || text.substring(0, 80), outOfStock: isOutOfStock });
+              }
+            }
+            return products;
+          });
+
+          const outOfStock = productStatus.filter(p => p.outOfStock);
+          if (outOfStock.length > 0) {
+            outOfStockIssues += outOfStock.length;
+            record(`Category "${coll}" Stock`, false, `${outOfStock.length} out-of-stock product(s) found`);
+          } else {
+            record(`Category "${coll}" Stock`, true, `${productStatus.length} products — none out of stock`);
+          }
+          fallbackCount++;
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Summary for stock check
+  const stockSummary = outOfStockIssues === 0
+    ? `Spot checked ${categoriesToCheck.length} categories — no out-of-stock products found displaying`
+    : `Found ${outOfStockIssues} out-of-stock product(s) across ${categoriesToCheck.length} categories`;
+  emit({ step: stockSummary });
+
+  // ── CHECK 2: Navigation links validity (10 checks) ──
+  emit({ step: 'Checking navigation links for valid pages...' });
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const navLinks = await page.evaluate(() => {
+    const links = [];
+    const seen = new Set();
+
+    // Get links from main navigation areas
+    const navAreas = document.querySelectorAll('nav, header, [class*="nav"], [class*="menu"], [role="navigation"]');
+    for (const nav of navAreas) {
+      const anchors = nav.querySelectorAll('a[href]');
+      for (const a of anchors) {
+        const href = (a.getAttribute('href') || '').split('?')[0].split('#')[0];
+        const text = (a.textContent || '').trim();
+
+        // Skip external links, empty links, anchors, javascript
+        if (!href || href === '/' || href === '#' || href.startsWith('javascript:')) continue;
+        if (href.startsWith('http') && !href.includes(location.hostname)) continue;
+        if (href.startsWith('mailto:') || href.startsWith('tel:')) continue;
+        if (seen.has(href)) continue;
+        if (!text || text.length < 2) continue;
+
+        // Must be visible
+        if (a.offsetParent === null || a.offsetWidth === 0) continue;
+
+        seen.add(href);
+        links.push({ href, text: text.substring(0, 50) });
+      }
+    }
+
+    return links;
+  });
+
+  emit({ step: `Found ${navLinks.length} unique navigation links` });
+
+  // Shuffle and pick up to 10
+  const navToCheck = navLinks.sort(() => Math.random() - 0.5).slice(0, 10);
+  let brokenLinks = 0;
+
+  for (let i = 0; i < navToCheck.length; i++) {
+    const link = navToCheck[i];
+    const fullUrl = link.href.startsWith('http') ? link.href : `${origin}${link.href}`;
+    emit({ step: `Nav link ${i + 1}/10: "${link.text}" → ${link.href}` });
+
+    try {
+      const response = await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await page.waitForTimeout(1500);
+
+      const status = response ? response.status() : 0;
+
+      // Check for 404 or error pages
+      const pageCheck = await page.evaluate(() => {
+        const title = (document.title || '').toLowerCase();
+        const h1 = document.querySelector('h1');
+        const h1Text = h1 ? (h1.textContent || '').toLowerCase() : '';
+        const bodyText = (document.body.innerText || '').substring(0, 500).toLowerCase();
+
+        const is404 =
+          title.includes('404') || title.includes('not found') ||
+          h1Text.includes('404') || h1Text.includes('not found') ||
+          h1Text.includes('page not found');
+
+        const isEmpty = bodyText.trim().length < 50;
+
+        return { is404, isEmpty, title: document.title, h1: h1Text.substring(0, 80) };
+      });
+
+      if (status >= 400 || pageCheck.is404) {
+        brokenLinks++;
+        const shotPath = screenshotPath(store.newStore, 'inventory', `02_nav_broken_${i + 1}`);
+        await page.screenshot({ path: shotPath, fullPage: false });
+        emit({ screenshot: screenshotUrl(shotPath), label: `Broken: ${link.text}` });
+        record(
+          `Nav Link "${link.text}"`,
+          false,
+          `Broken page (status: ${status}): ${fullUrl} — Title: "${pageCheck.title}"`
+        );
+      } else if (pageCheck.isEmpty) {
+        const shotPath = screenshotPath(store.newStore, 'inventory', `02_nav_empty_${i + 1}`);
+        await page.screenshot({ path: shotPath, fullPage: false });
+        emit({ screenshot: screenshotUrl(shotPath), label: `Empty: ${link.text}` });
+        record(
+          `Nav Link "${link.text}"`,
+          false,
+          `Page loads but appears empty: ${fullUrl}`
+        );
+        brokenLinks++;
+      } else {
+        record(
+          `Nav Link "${link.text}"`,
+          true,
+          `Page loads (status: ${status}): ${fullUrl}`
+        );
+      }
+    } catch (err) {
+      brokenLinks++;
+      record(`Nav Link "${link.text}"`, false, `Failed to load: ${err.message.substring(0, 100)}`);
+    }
+  }
+
+  // Final summary screenshot
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(1000);
+  const finalShot = screenshotPath(store.newStore, 'inventory', '03_summary');
+  await page.screenshot({ path: finalShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(finalShot), label: 'Store homepage (summary)' });
+
+  const allPassed = checks.every(c => c.passed);
+  const passCount = checks.filter(c => c.passed).length;
+
+  return {
+    passed: allPassed,
+    message: `Inventory check: ${passCount}/${checks.length} passed. Stock: ${outOfStockIssues === 0 ? 'No out-of-stock items found' : `${outOfStockIssues} out-of-stock issues`}. Nav: ${brokenLinks === 0 ? 'All links valid' : `${brokenLinks} broken link(s)`}.`,
+    checks,
+  };
 }
 
 // ─── Main runner (parallel) ─────────────────────────────────────────

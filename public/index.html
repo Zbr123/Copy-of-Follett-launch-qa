@@ -123,7 +123,7 @@
     .store-card .btn-remove:hover { color: #ff453a; }
     .store-fields {
       display: grid;
-      grid-template-columns: 2fr 1fr;
+      grid-template-columns: 1fr;
       gap: 12px;
     }
     .field label {
@@ -1203,6 +1203,9 @@
       <div class="step-header">
         <h2>Stores. <span>Add the stores you want to test.</span></h2>
       </div>
+      <div style="background:#ff453a18;border:1px solid #ff453a44;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#ff6961;line-height:1.5;">
+        <strong style="color:#ff453a;">⚠ Important:</strong> Paste the <strong>Preview link</strong> from Shopify Admin. Go to <strong>Sales Channel → Online Store → ⋯ → Right Click → Copy "Preview" link</strong>.
+      </div>
       <div id="storeRows"></div>
       <button class="btn-add-store" onclick="addStoreRow()">+ Add Store</button>
       <button class="bulk-link" onclick="toggleBulk()">
@@ -1210,8 +1213,8 @@
         Bulk paste from CSV
       </button>
       <div class="bulk-panel" id="bulkArea">
-        <textarea id="bulkInput" placeholder="store-name.myshopify.com, password&#10;another-store.myshopify.com, pass456"></textarea>
-        <div class="bulk-hint">One store per line: URL, password (comma-separated)</div>
+        <textarea id="bulkInput" placeholder="https://store-name.myshopify.com/?preview_theme_id=...&#10;https://another-store.myshopify.com/?preview_theme_id=..."></textarea>
+        <div class="bulk-hint">One store preview URL per line</div>
         <button class="btn-import" onclick="parseBulk()">Import Stores</button>
       </div>
     </div>
@@ -1342,6 +1345,9 @@
 
       <!-- Store input for ADA scan -->
       <div class="ada-input-section">
+        <div style="background:#ff453a18;border:1px solid #ff453a44;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#ff6961;line-height:1.5;">
+          <strong style="color:#ff453a;">⚠ Important:</strong> Paste the <strong>Preview link</strong> from Shopify Admin. Go to <strong>Sales Channel → Online Store → ⋯ → Right Click → Copy "Preview" link</strong>.
+        </div>
         <div id="adaStoreRows"></div>
         <button class="btn-add-store" onclick="addAdaStoreRow()">+ Add Store</button>
       </div>
@@ -1373,11 +1379,12 @@
       { id: 'cart-add', name: 'Add to Cart', desc: 'Add a product and verify cart state' },
       { id: 'rental-collateral', name: 'Rental Collateral', desc: 'Rent flow + checkout collateral message' },
       { id: 'digital-delivery-fee', name: 'Digital Delivery Fee', desc: 'Digital product + delivery fee in checkout' },
-      { id: 'checkout-validation', name: 'Checkout Validation', desc: 'Field labels, Financial Aid, Follett disclaimer' },
+      { id: 'checkout-validation', name: 'Checkout Validation', desc: 'Field labels, Financial Aid, disclaimer, email marketing compliance' },
       { id: 'pickup-name-validation', name: 'Pickup Name Validation', desc: 'Location name has no numeric store ID' },
       { id: 'page-content-migration', name: 'Page & Content Migration', desc: '22 checks: logo, hours, footer, policies, email signup compliance' },
       { id: 'homepage-plp-pdp', name: 'Homepage, PLP & PDP', desc: 'Banners, ads, filters, color swatches' },
       { id: 'course-materials', name: 'Course Materials', desc: 'Textbook search, dropdowns, add to cart' },
+      { id: 'inventory', name: 'Inventory', desc: 'Out-of-stock spot check (5 categories) + nav link validation (10 links)' },
     ];
 
     const selectedTests = new Set(TESTS.map(t => t.id));
@@ -1428,7 +1435,7 @@
 
     /* ── Store Rows ── */
     let storeCounter = 0;
-    function addStoreRow(url = '', pw = '') {
+    function addStoreRow(url = '') {
       storeCounter++;
       const container = document.getElementById('storeRows');
       const card = document.createElement('div');
@@ -1439,13 +1446,9 @@
           <button class="btn-remove" onclick="removeStore(this)">&times;</button>
         </div>
         <div class="store-fields">
-          <div class="field">
-            <label>Shopify Store URL</label>
-            <input type="text" placeholder="store-name.myshopify.com" value="${url}" class="store-url" />
-          </div>
-          <div class="field">
-            <label>Password</label>
-            <input type="password" placeholder="Preview password" value="${pw}" class="store-pw" />
+          <div class="field" style="flex:1;">
+            <label>Shopify Preview URL</label>
+            <input type="text" placeholder="https://store-name.myshopify.com/?preview_theme_id=..." value="${url}" class="store-url" />
           </div>
         </div>`;
       container.appendChild(card);
@@ -1467,8 +1470,7 @@
       const text = document.getElementById('bulkInput').value.trim();
       if (!text) return;
       text.split('\n').filter(l => l.trim()).forEach(line => {
-        const parts = line.split(',').map(s => s.trim());
-        addStoreRow(parts[0] || '', parts[1] || '');
+        addStoreRow(line.trim());
       });
       document.getElementById('bulkInput').value = '';
       document.getElementById('bulkArea').classList.remove('show');
@@ -1477,7 +1479,7 @@
       return Array.from(document.querySelectorAll('.store-card')).map(card => ({
         originalStore: '',
         newStore: card.querySelector('.store-url').value.trim(),
-        password: card.querySelector('.store-pw').value.trim(),
+        password: '',
       })).filter(s => s.newStore);
     }
 
@@ -1948,7 +1950,7 @@
 
     /* ── Accessibility Scanner ── */
     let adaStoreCounter = 0;
-    function addAdaStoreRow(url = '', pw = '') {
+    function addAdaStoreRow(url = '') {
       adaStoreCounter++;
       const container = document.getElementById('adaStoreRows');
       const card = document.createElement('div');
@@ -1959,13 +1961,9 @@
           <button class="btn-remove" onclick="this.closest('.store-card').remove()">&times;</button>
         </div>
         <div class="store-fields">
-          <div class="field">
-            <label>Shopify Store URL</label>
-            <input type="text" placeholder="store-name.myshopify.com" value="${url}" class="store-url" />
-          </div>
-          <div class="field">
-            <label>Password</label>
-            <input type="password" placeholder="Preview password" value="${pw}" class="store-pw" />
+          <div class="field" style="flex:1;">
+            <label>Shopify Preview URL</label>
+            <input type="text" placeholder="https://store-name.myshopify.com/?preview_theme_id=..." value="${url}" class="store-url" />
           </div>
         </div>`;
       container.appendChild(card);
@@ -1976,8 +1974,7 @@
       const stores = [];
       rows.forEach(row => {
         const url = row.querySelector('.store-url').value.trim();
-        const pw = row.querySelector('.store-pw').value.trim();
-        if (url) stores.push({ newStore: url, password: pw });
+        if (url) stores.push({ newStore: url, password: '' });
       });
       return stores;
     }
