@@ -1357,18 +1357,21 @@ async function testPickupNameValidation(page, store, emit) {
   await page.screenshot({ path: checkoutShot, fullPage: false });
   emit({ screenshot: screenshotUrl(checkoutShot), label: 'Checkout page' });
 
-  // Step 3: Click "Pick up" radio under Delivery
-  emit({ step: 'Looking for "Pick up" delivery option...' });
+  // Step 3: Click "Pick up" / "Pickup" option under Delivery
+  emit({ step: 'Looking for "Pick up" / "Pickup" delivery option...' });
 
-  const pickupRadio = await page.$('input[type="radio"][value*="ick" i], label:has-text("Pick up") input[type="radio"]');
   let pickupClicked = false;
 
+  // Strategy 1: Classic radio button approach
+  const pickupRadio = await page.$('input[type="radio"][value*="ick" i], label:has-text("Pick up") input[type="radio"]');
   if (pickupRadio) {
     emit({ step: 'Found "Pick up" radio — clicking...' });
     await pickupRadio.click();
     pickupClicked = true;
-  } else {
-    // Try clicking a label that says "Pick up"
+  }
+
+  // Strategy 2: Label with "Pick up" text
+  if (!pickupClicked) {
     const pickupLabel = await page.$('label:has-text("Pick up")');
     if (pickupLabel) {
       emit({ step: 'Found "Pick up" label — clicking...' });
@@ -1377,15 +1380,41 @@ async function testPickupNameValidation(page, store, emit) {
     }
   }
 
+  // Strategy 3: New Shopify UI — "Pickup" button/tab (no space)
   if (!pickupClicked) {
-    // Fallback: search all radio buttons for Pick up text
+    pickupClicked = await page.evaluate(() => {
+      // Look for buttons/tabs that say "Pickup" (new Shopify UI)
+      const candidates = document.querySelectorAll('button, [role="tab"], [role="button"], label, div[class*="delivery"], div[class*="tab"]');
+      for (const el of candidates) {
+        const text = (el.textContent || '').trim();
+        if (/^pickup$/i.test(text) && el.offsetParent !== null && el.offsetWidth > 0) {
+          el.click();
+          return true;
+        }
+      }
+      // Also try partial match for "Pickup" in buttons near delivery section
+      for (const el of candidates) {
+        const text = (el.textContent || '').trim();
+        if (/pickup/i.test(text) && !/pick\s*up/i.test(text) && el.offsetParent !== null && el.offsetWidth > 0) {
+          el.click();
+          return true;
+        }
+      }
+      return false;
+    });
+    if (pickupClicked) emit({ step: 'Found "Pickup" button (new Shopify UI) — clicked.' });
+  }
+
+  // Strategy 4: Fallback radio search
+  if (!pickupClicked) {
     const radios = await page.$$('input[type="radio"]');
     for (const radio of radios) {
       const label = await page.$(`label[for="${await radio.getAttribute('id')}"]`);
       const labelText = label ? await label.textContent().catch(() => '') : '';
       const ariaLabel = await radio.getAttribute('aria-label') || '';
-      if (labelText.toLowerCase().includes('pick up') || ariaLabel.toLowerCase().includes('pick up')) {
-        emit({ step: 'Found "Pick up" radio via label search — clicking...' });
+      if (labelText.toLowerCase().includes('pick up') || labelText.toLowerCase().includes('pickup') ||
+          ariaLabel.toLowerCase().includes('pick up') || ariaLabel.toLowerCase().includes('pickup')) {
+        emit({ step: 'Found "Pickup" radio via label search — clicking...' });
         await radio.click();
         pickupClicked = true;
         break;
@@ -2008,7 +2037,8 @@ async function testHomepagePlpPdp(page, store, emit) {
   // ── Check 1: Homepage banner links to internal URL ──
   emit({ step: 'Check 1: Verifying homepage banner links...' });
   await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.waitForTimeout(2000);
+  // Wait longer for banners, hero images, and ad scripts to fully load
+  await page.waitForTimeout(5000);
 
   const bannerShot = screenshotPath(store.newStore, 'homepage-plp-pdp', '01_homepage');
   await page.screenshot({ path: bannerShot, fullPage: false });
@@ -2019,15 +2049,21 @@ async function testHomepagePlpPdp(page, store, emit) {
     const bannerSelectors = [
       '.hero a', '.banner a', '.slideshow a', '[class*="hero"] a', '[class*="banner"] a',
       '[class*="slide"] a', '.carousel a', '[class*="carousel"] a',
+      '[class*="image-banner"] a', '[class*="image_banner"] a',
+      '.shopify-section a[href] img', // sections with linked images
       'section:first-of-type a[href]', '.shopify-section:first-of-type a[href]',
+      '.shopify-section:nth-of-type(2) a[href]', '.shopify-section:nth-of-type(3) a[href]',
       'a[href*="/collections/"]', 'a[href*="/products/"]', 'a[href*="/pages/"]',
     ];
 
     const results = { bannerLinks: [], hasInternalBanner: false, hasExternalBanner: false };
 
     for (const sel of bannerSelectors) {
-      const links = document.querySelectorAll(sel);
-      for (const a of links) {
+      const elements = document.querySelectorAll(sel);
+      for (let el of elements) {
+        // If we matched an img inside an <a>, walk up to the <a>
+        const a = el.tagName === 'A' ? el : el.closest('a');
+        if (!a) continue;
         const href = a.getAttribute('href') || '';
         const rect = a.getBoundingClientRect();
         // Only consider links that are in the visible hero area (top 800px, reasonably wide)
@@ -2061,6 +2097,8 @@ async function testHomepagePlpPdp(page, store, emit) {
 
   // ── Check 2: Freestar ad on homepage ──
   emit({ step: 'Check 2: Checking for ads on homepage...' });
+  // Extra wait for ad scripts (Freestar/GPT load asynchronously)
+  await page.waitForTimeout(3000);
 
   const homepageAdCheck = await page.evaluate(() => {
     const html = document.documentElement.innerHTML;

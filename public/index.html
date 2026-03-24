@@ -8,12 +8,14 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { overflow-x: hidden; }
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       background: #000;
       color: #fff;
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
 
     /* ── Nav ── */
@@ -90,6 +92,7 @@
       position: relative;
       border: 1px solid #1d1d1f;
       transition: border-color 0.2s;
+      overflow: hidden;
     }
     .store-card:hover {
       border-color: #333;
@@ -132,6 +135,7 @@
     }
     .field input {
       width: 100%;
+      min-width: 0;
       background: #000;
       border: 1px solid #333;
       border-radius: 10px;
@@ -931,6 +935,249 @@
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+    /* ── Responsive ── */
+
+    /* Tablet */
+    @media (max-width: 768px) {
+      nav {
+        padding: 0 16px;
+        height: 48px;
+      }
+      nav .nav-left span {
+        font-size: 13px;
+      }
+      nav .nav-left .divider {
+        display: none;
+      }
+      .nav-tabs {
+        gap: 2px;
+      }
+      .nav-tab {
+        font-size: 12px;
+        padding: 6px 10px;
+      }
+      nav .nav-right {
+        display: none;
+      }
+      .container {
+        max-width: 100%;
+        padding: 32px 16px 80px;
+      }
+      .step-header h2 {
+        font-size: 22px;
+      }
+      .step-section {
+        margin-bottom: 40px;
+      }
+      .test-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+      .test-option {
+        padding: 14px 16px;
+      }
+      .store-fields {
+        grid-template-columns: 1fr;
+      }
+      .store-card {
+        padding: 18px;
+      }
+      .btn-run {
+        padding: 14px 40px;
+        font-size: 16px;
+        width: 100%;
+      }
+      .progress-stats {
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .store-result-body {
+        padding: 14px;
+      }
+      .screenshots {
+        gap: 6px;
+      }
+      .screenshot-thumb {
+        width: 100%;
+      }
+      .export-bar {
+        flex-direction: column;
+        gap: 8px;
+      }
+      .export-bar .btn-export {
+        width: 100%;
+        justify-content: center;
+      }
+      /* Dashboard */
+      .dash-run-card {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+      }
+      .dash-run-stats {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      .dash-stores-table th,
+      .dash-stores-table td {
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+      /* ADA */
+      .ada-summary-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .ada-violations-list .ada-node {
+        padding: 10px;
+      }
+    }
+
+    /* Mobile */
+    @media (max-width: 480px) {
+      nav {
+        padding: 0 10px;
+        height: 44px;
+      }
+      nav .nav-left img {
+        height: 20px;
+      }
+      nav .nav-left span {
+        display: none;
+      }
+      nav .nav-left .divider {
+        display: none;
+      }
+      nav .nav-left {
+        gap: 8px;
+      }
+      .nav-tabs {
+        gap: 0;
+      }
+      .nav-tab {
+        font-size: 11px;
+        padding: 5px 8px;
+      }
+      .container {
+        padding: 24px 12px 60px;
+      }
+      .step-header {
+        margin-bottom: 20px;
+      }
+      .step-header h2 {
+        font-size: 18px;
+      }
+      .step-section {
+        margin-bottom: 32px;
+      }
+      .store-card {
+        border-radius: 12px;
+        padding: 14px;
+      }
+      .store-card-label {
+        font-size: 10px;
+      }
+      .field input {
+        padding: 10px 12px;
+        font-size: 13px;
+        border-radius: 8px;
+      }
+      .btn-add-store {
+        border-radius: 12px;
+        padding: 14px;
+        font-size: 13px;
+      }
+      .test-option {
+        border-radius: 12px;
+        padding: 12px 14px;
+      }
+      .test-option .t-name {
+        font-size: 13px;
+      }
+      .test-option .t-desc {
+        font-size: 11px;
+      }
+      .test-option .check-dot {
+        width: 18px;
+        height: 18px;
+        top: 10px;
+        right: 10px;
+      }
+      .run-section {
+        flex-direction: column !important;
+        align-items: stretch !important;
+      }
+      .btn-run {
+        padding: 14px 24px;
+        font-size: 15px;
+        border-radius: 980px;
+        width: 100%;
+        justify-content: center;
+      }
+      .btn-validate {
+        width: 100%;
+        text-align: center;
+      }
+      .progress-stats {
+        gap: 12px;
+      }
+      .progress-stat {
+        font-size: 12px;
+      }
+      .reminder-bar {
+        font-size: 12px;
+        padding: 12px 14px;
+      }
+      .store-result {
+        border-radius: 12px;
+      }
+      .store-result-header {
+        padding: 10px 14px;
+        font-size: 13px;
+      }
+      .store-result-body {
+        padding: 12px;
+      }
+      .test-result-header strong {
+        font-size: 13px;
+      }
+      .test-message {
+        font-size: 12px;
+      }
+      .test-steps div {
+        font-size: 11px;
+      }
+      .lightbox img {
+        max-width: 95vw;
+        max-height: 85vh;
+      }
+      /* Dashboard */
+      .dash-run-card .dash-run-time {
+        font-size: 12px;
+      }
+      .dash-stores-table {
+        font-size: 12px;
+      }
+      .dash-stores-table th:first-child,
+      .dash-stores-table td:first-child {
+        max-width: 140px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* ADA */
+      .ada-summary-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+      }
+      .ada-total-stat .num {
+        font-size: 22px;
+      }
+      .ada-node-html,
+      .ada-node-selector {
+        font-size: 11px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -982,7 +1229,7 @@
     </div>
 
     <!-- ── Run ── -->
-    <div class="run-section" style="display:flex;gap:12px;align-items:center;">
+    <div class="run-section" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
       <button class="btn-run" id="runBtn" onclick="runTests()">
         <span class="spinner"></span>
         <span class="run-label">Run All Tests</span>
