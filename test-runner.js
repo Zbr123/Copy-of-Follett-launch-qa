@@ -2001,6 +2001,116 @@ async function testPageContentMigration(page, store, emit) {
     hoursPageFound ? `Store Hours page found at ${hoursPageUrl}` : 'Store Hours page not found (tried /pages/store-hours, /pages/hours, /pages/store-info, and footer links)'
   );
 
+  // ── Check: Footer Email Signup Compliance Message ──
+  emit({ step: `Check ${checks.length + 1}: Checking footer email signup compliance message...` });
+
+  // Navigate back to homepage to find the footer signup
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(3000);
+
+  // Scroll to footer to ensure it loads
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForTimeout(2000);
+
+  const emailSignupCheck = await page.evaluate(() => {
+    const body = document.body.innerText;
+    const html = document.body.innerHTML;
+
+    const results = {
+      hasComplianceText: false,
+      complianceText: '',
+      termsOfUseLink: { found: false, href: '', opensNewTab: false, correctUrl: false },
+      privacyPolicyLink: { found: false, href: '', opensNewTab: false, correctUrl: false },
+      cookiePrefLink: { found: false, href: '', isOneTrust: false },
+      issues: [],
+    };
+
+    // Look for the compliance message text
+    const compliancePattern = /by providing my email.*accept.*terms of use.*privacy policy.*cookie preference/i;
+    results.hasComplianceText = compliancePattern.test(body);
+
+    if (!results.hasComplianceText) {
+      // Try broader search
+      const altPattern = /providing.*email.*terms.*privacy.*cookie/i;
+      results.hasComplianceText = altPattern.test(body);
+    }
+
+    if (!results.hasComplianceText) {
+      results.issues.push('Compliance message "By providing my email, I accept the Terms of Use, Privacy Policy, and Cookie Preference Policy." not found');
+      return results;
+    }
+
+    // Find the compliance area — look for links near the compliance text
+    const allLinks = document.querySelectorAll('a');
+    for (const link of allLinks) {
+      const text = (link.textContent || '').trim();
+      const href = link.getAttribute('href') || '';
+      const target = link.getAttribute('target') || '';
+      const opensNew = target === '_blank';
+
+      // Terms of Use
+      if (/terms of use/i.test(text)) {
+        results.termsOfUseLink.found = true;
+        results.termsOfUseLink.href = href;
+        results.termsOfUseLink.opensNewTab = opensNew;
+        results.termsOfUseLink.correctUrl = href.includes('follett.com/terms-of-use');
+        if (!results.termsOfUseLink.correctUrl) {
+          results.issues.push(`Terms of Use link points to "${href}" instead of follett.com/terms-of-use/`);
+        }
+        if (!results.termsOfUseLink.opensNewTab) {
+          results.issues.push('Terms of Use link does not open in a new tab (missing target="_blank")');
+        }
+      }
+
+      // Privacy Policy
+      if (/privacy policy/i.test(text) && !/cookie/i.test(text)) {
+        results.privacyPolicyLink.found = true;
+        results.privacyPolicyLink.href = href;
+        results.privacyPolicyLink.opensNewTab = opensNew;
+        results.privacyPolicyLink.correctUrl = href.includes('follett.com/policies');
+        if (!results.privacyPolicyLink.correctUrl) {
+          results.issues.push(`Privacy Policy link points to "${href}" instead of follett.com/policies/`);
+        }
+        if (!results.privacyPolicyLink.opensNewTab) {
+          results.issues.push('Privacy Policy link does not open in a new tab (missing target="_blank")');
+        }
+      }
+
+      // Cookie Preference Policy
+      if (/cookie preference/i.test(text)) {
+        results.cookiePrefLink.found = true;
+        results.cookiePrefLink.href = href;
+        // Check if it triggers OneTrust modal (href contains onetrust or javascript or # for modal trigger)
+        results.cookiePrefLink.isOneTrust = /onetrust|optanon|cookie-settings|javascript:|ot-sdk/i.test(href) ||
+          link.classList.contains('ot-sdk-show-settings') ||
+          link.getAttribute('onclick')?.includes('OneTrust') ||
+          link.getAttribute('onclick')?.includes('Optanon') ||
+          link.id?.includes('ot-') ||
+          href === '#' || href === '';
+        if (!results.cookiePrefLink.isOneTrust) {
+          results.issues.push(`Cookie Preference Policy link does not appear to trigger OneTrust modal (href: "${href}")`);
+        }
+      }
+    }
+
+    if (!results.termsOfUseLink.found) results.issues.push('Terms of Use link not found in compliance message');
+    if (!results.privacyPolicyLink.found) results.issues.push('Privacy Policy link not found in compliance message');
+    if (!results.cookiePrefLink.found) results.issues.push('Cookie Preference Policy link not found in compliance message');
+
+    return results;
+  });
+
+  const emailSignupShot = screenshotPath(store.newStore, 'page-content-migration', '22_email_signup_compliance');
+  await page.screenshot({ path: emailSignupShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(emailSignupShot), label: 'Email signup compliance' });
+
+  if (emailSignupCheck.issues.length === 0) {
+    record('Email Signup Compliance', true,
+      `Compliance message found with correct links: Terms of Use → follett.com (new tab), Privacy Policy → follett.com (new tab), Cookie Preference → OneTrust modal`);
+  } else {
+    record('Email Signup Compliance', false, emailSignupCheck.issues.join('; '));
+  }
+
   // ── Summary ──
   const TOTAL_CHECKS = checks.length;
   const passedCount = checks.filter(c => c.passed).length;
