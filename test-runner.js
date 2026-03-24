@@ -63,7 +63,7 @@ const TEST_REGISTRY = {
   },
   'page-content-migration': {
     name: 'Page and Content Migration',
-    description: 'Verify 21 content checks: logo, hours, address, pages, footer links, Terms/Privacy/Cookie/DNS',
+    description: 'Verify 22 content checks: logo, hours, address, pages, footer links, Terms/Privacy/Cookie/DNS, email signup compliance',
     run: testPageContentMigration,
   },
   'homepage-plp-pdp': {
