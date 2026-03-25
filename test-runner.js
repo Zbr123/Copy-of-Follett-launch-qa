@@ -1,6 +1,30 @@
-const { chromium } = require('playwright');
+const { chromium } = require('playwright-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const path = require('path');
 const fs = require('fs');
+
+// ─── Stealth & Cloudflare bypass ────────────────────────────────────
+chromium.use(StealthPlugin());
+
+/**
+ * Detect if the current page is a Cloudflare challenge/verification page.
+ */
+async function isCloudflareChallenge(page) {
+  try {
+    const content = await page.content();
+    return (
+      content.includes('cf-challenge') ||
+      content.includes('cf_chl_opt') ||
+      content.includes('Just a moment') ||
+      content.includes('Verify you are human') ||
+      content.includes('needs to be verified before you can proceed') ||
+      content.includes('challenges.cloudflare.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
 
 const SCREENSHOTS_DIR = path.join(__dirname, 'screenshots');
 
@@ -3063,9 +3087,47 @@ async function runStoreTests(browser, store, testIds, sendEvent) {
     viewport: { width: 1920, height: 1080 },
     deviceScaleFactor: 2,
     userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
   });
   const page = await context.newPage();
+
+  // Patch page.goto to automatically handle Cloudflare challenges
+  const originalGoto = page.goto.bind(page);
+  page.goto = async function (url, options = {}) {
+    const response = await originalGoto(url, options);
+    if (await isCloudflareChallenge(page)) {
+      sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: 'Cloudflare challenge detected — waiting for auto-resolve...' });
+      try {
+        await page.waitForFunction(
+          () => !document.body.innerText.includes('Verify you are human') &&
+                !document.body.innerText.includes('Just a moment') &&
+                !document.body.innerText.includes('needs to be verified'),
+          { timeout: 15000 }
+        );
+        await page.waitForTimeout(2000);
+      } catch {
+        // Retry the navigation once after a delay
+        sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: 'Challenge persisted — retrying navigation...' });
+        await page.waitForTimeout(5000);
+        const retryResponse = await originalGoto(url, options);
+        if (await isCloudflareChallenge(page)) {
+          try {
+            await page.waitForFunction(
+              () => !document.body.innerText.includes('Verify you are human') &&
+                    !document.body.innerText.includes('Just a moment') &&
+                    !document.body.innerText.includes('needs to be verified'),
+              { timeout: 15000 }
+            );
+            await page.waitForTimeout(2000);
+          } catch {
+            // Exhausted retries — proceed and let the test handle the failure
+          }
+        }
+        return retryResponse;
+      }
+    }
+    return response;
+  };
 
   let loginDone = false;
 
@@ -3493,11 +3555,17 @@ async function testInventory(page, store, emit) {
 
 // ─── Main runner (parallel) ─────────────────────────────────────────
 
-const DEFAULT_CONCURRENCY = 5;
+const DEFAULT_CONCURRENCY = 3;
 
 async function runTests(stores, testIds, sendEvent, options = {}) {
   const concurrency = options.concurrency || DEFAULT_CONCURRENCY;
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+    ],
+  });
 
   // Process stores in parallel with limited concurrency
   const queue = [...stores];

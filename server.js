@@ -40,7 +40,7 @@ app.post('/api/run-tests', async (req, res) => {
     startedAt: new Date().toISOString(),
     stores: stores.map(s => s.newStore),
     tests,
-    concurrency: concurrency || 5,
+    concurrency: concurrency || 3,
     results: [],
     status: 'running',
   };
@@ -76,7 +76,7 @@ app.post('/api/run-tests', async (req, res) => {
   };
 
   try {
-    await runTests(stores, tests, sendEvent, { concurrency: concurrency || 5 });
+    await runTests(stores, tests, sendEvent, { concurrency: concurrency || 3 });
     runData.status = 'complete';
     runData.completedAt = new Date().toISOString();
     fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
@@ -342,7 +342,7 @@ app.post('/api/schedule-run', (req, res) => {
     id: scheduleId,
     stores,
     tests,
-    concurrency: concurrency || 5,
+    concurrency: concurrency || 3,
     scheduledFor: runTime.toISOString(),
     status: 'scheduled',
     runId: null,

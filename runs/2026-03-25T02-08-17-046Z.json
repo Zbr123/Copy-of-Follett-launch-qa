@@ -1,0 +1,752 @@
+{
+  "id": "2026-03-25T02-08-17-046Z",
+  "startedAt": "2026-03-25T02:08:17.046Z",
+  "stores": [
+    "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267"
+  ],
+  "tests": [
+    "storefront-login",
+    "storefront-loads",
+    "collection-page",
+    "cart-add",
+    "rental-collateral",
+    "digital-delivery-fee",
+    "checkout-validation",
+    "pickup-name-validation",
+    "page-content-migration",
+    "homepage-plp-pdp",
+    "course-materials",
+    "inventory"
+  ],
+  "concurrency": 3,
+  "results": [
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "storefront-login",
+      "passed": true,
+      "message": "Store loaded without password gate",
+      "checks": [],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_storefront-login_01_initial.png",
+          "label": "Initial page load"
+        }
+      ],
+      "timestamp": "2026-03-25T02:08:20.343Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "storefront-loads",
+      "passed": true,
+      "message": "Storefront loaded — title: \"Blackhawk Bookstore\"",
+      "checks": [],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_storefront-loads_01_homepage.png",
+          "label": "Homepage"
+        }
+      ],
+      "timestamp": "2026-03-25T02:08:20.609Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "collection-page",
+      "passed": true,
+      "message": "Found 465 product elements on https://bkstr-0125.myshopify.com/collections/clothing-accessories?filter.v.availability=1&filter.p.tag=has-image&filter.p.tag=adoptedtitle",
+      "checks": [],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_collection-page_01_collection.png",
+          "label": "Collection page"
+        }
+      ],
+      "timestamp": "2026-03-25T02:08:26.163Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "cart-add",
+      "passed": true,
+      "message": "Add to cart successful. Cart has 1 item(s).",
+      "checks": [],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_cart-add_01_product.png",
+          "label": "Product page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_cart-add_02_after_add.png",
+          "label": "After Add to Cart"
+        }
+      ],
+      "timestamp": "2026-03-25T02:08:35.573Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "rental-collateral",
+      "passed": true,
+      "message": "Rental flow complete. Cart: 2 items (Rental Collateral, Dental Radiography - Print / Rent New). Checkout has recurring subtotal, Rental Collateral, and rental login message.",
+      "checks": [
+        {
+          "name": "Recurring Subtotal",
+          "passed": true,
+          "detail": "Found on checkout page"
+        },
+        {
+          "name": "Rental Collateral",
+          "passed": true,
+          "detail": "Found on checkout page"
+        },
+        {
+          "name": "Rental Login Message",
+          "passed": true,
+          "detail": "Message displayed on checkout"
+        }
+      ],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_02_search_results.png",
+          "label": "Search results"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_03_product_1.png",
+          "label": "Product 1"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_04_print_tab_1.png",
+          "label": "Print tab (product 1)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_03_product_2.png",
+          "label": "Product 2"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_04_print_tab_2.png",
+          "label": "Print tab (product 2)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_03_product_3.png",
+          "label": "Product 3"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_04_print_tab_3.png",
+          "label": "Print tab (product 3)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_03_product_4.png",
+          "label": "Product 4"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_04_print_tab_4.png",
+          "label": "Print tab (product 4)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_05_rent_selected_4.png",
+          "label": "Rent selected (product 4)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_06_added_to_bag.png",
+          "label": "After Add to Bag"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_07_cart.png",
+          "label": "Cart page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_rental-collateral_08_checkout.png",
+          "label": "Checkout page"
+        }
+      ],
+      "timestamp": "2026-03-25T02:09:28.967Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "digital-delivery-fee",
+      "passed": true,
+      "message": "Digital delivery flow complete. Cart: 2 items. Digital Delivery Fee: $5.99. Both items confirmed on checkout.",
+      "checks": [
+        {
+          "name": "Digital Delivery Fee",
+          "passed": true,
+          "detail": "Found on checkout page"
+        },
+        {
+          "name": "Product on Checkout",
+          "passed": true,
+          "detail": "\"Shelly Cashman Series Microsoft Office 365 & Publisher 2016: Introductory, Loose-leaf Version\" found on checkout"
+        }
+      ],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_01_search_results.png",
+          "label": "Search results"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_02_product_1.png",
+          "label": "Product 1: Digital Project Management"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_02_product_2.png",
+          "label": "Product 2: Digital Project Management"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_02_product_3.png",
+          "label": "Product 3: Digital Business & e-Commerce Management"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_02_product_4.png",
+          "label": "Product 4: Digital Business & e-Commerce Management"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_02_product_5.png",
+          "label": "Product 5: Diagnostic Medical Sonography: Vascular System 3e Lippinco.tt Connect Print Book & Digital Access Card Package"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_02_product_6.png",
+          "label": "Product 6: Diagnostic Medical Sonography: Vascular System 3e Lippinco.tt Connect Print Book & Digital Access Card Package"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_02_product_7.png",
+          "label": "Product 7: Shelly Cashman Series Microsoft Office 365 & Publisher 2016: Introductory, Loose-leaf Version"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_02b_buy_selected_7.png",
+          "label": "Buy selected (product 7)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_03_added_7.png",
+          "label": "Added to bag (product 7)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_04_cart.png",
+          "label": "Cart page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_digital-delivery-fee_05_checkout.png",
+          "label": "Checkout page"
+        }
+      ],
+      "timestamp": "2026-03-25T02:10:28.703Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "checkout-validation",
+      "passed": false,
+      "message": "First Name has \"(optional)\" label — should be required. Label: \"First name (optional)\"; Phone Number is not required (has \"optional\" label). Label: \"Mobile phone (optional)\"; US store: \"Email me with news and offers\" checkbox should NOT exist (found: \"Email me with news and offers\", checked: true)",
+      "checks": [
+        {
+          "name": "Financial Aid Placement",
+          "passed": true,
+          "detail": "Found — position correct after Contact & Shipping"
+        },
+        {
+          "name": "First Name Required",
+          "passed": false,
+          "detail": "Has \"(optional)\" — should be required"
+        },
+        {
+          "name": "Phone Required",
+          "passed": false,
+          "detail": "Has \"optional\" label — should be required"
+        },
+        {
+          "name": "Disclaimer Text",
+          "passed": true,
+          "detail": "Agreement text found"
+        },
+        {
+          "name": "Terms of Use Link",
+          "passed": true,
+          "detail": "Linked correctly"
+        },
+        {
+          "name": "Privacy Policy Link",
+          "passed": true,
+          "detail": "Linked correctly"
+        },
+        {
+          "name": "Cookie Policy Link",
+          "passed": true,
+          "detail": "Linked correctly"
+        },
+        {
+          "name": "Disclaimer Position",
+          "passed": true,
+          "detail": "Above Pay Now button"
+        },
+        {
+          "name": "Email Marketing Compliance",
+          "passed": false,
+          "detail": "US store: \"Email me with news and offers\" checkbox should NOT exist (found: \"Email me with news and offers\", checked: true)"
+        }
+      ],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_02_checkout.png",
+          "label": "Checkout page (top)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_02b_checkout_mid.png",
+          "label": "Checkout (middle)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_02c_checkout_bottom.png",
+          "label": "Checkout (bottom)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_03_fields.png",
+          "label": "Checkout fields"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_04_disclaimer.png",
+          "label": "Pay Now / Disclaimer area"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_05_email_marketing.png",
+          "label": "Email marketing checkbox area"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_02_checkout.png",
+          "label": "Checkout page (top)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_02b_checkout_mid.png",
+          "label": "Checkout (middle)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_02c_checkout_bottom.png",
+          "label": "Checkout (bottom)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_03_fields.png",
+          "label": "Checkout fields"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_04_disclaimer.png",
+          "label": "Pay Now / Disclaimer area"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_checkout-validation_05_email_marketing.png",
+          "label": "Email marketing checkbox area"
+        }
+      ],
+      "timestamp": "2026-03-25T02:11:14.197Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "pickup-name-validation",
+      "passed": true,
+      "message": "Pickup location names are clean (no numerical IDs). Locations found: Pickup locationsUnited State...There is 1 location with stock close to youBlackhawk Bookstore6004 S County Rd G, Blackhawk Bookstore, Janesville WIFreeUsually ready in 24 hours; United State...; Pickup; Credit card; Shop Pay•Pay in full or in installments; PayPal; Pickup locations",
+      "checks": [],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_pickup-name-validation_02_checkout.png",
+          "label": "Checkout page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_pickup-name-validation_03_pickup_selected.png",
+          "label": "Pick up selected"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_pickup-name-validation_04_pickup_detail.png",
+          "label": "Pickup location detail"
+        }
+      ],
+      "timestamp": "2026-03-25T02:11:32.327Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "page-content-migration",
+      "passed": false,
+      "message": "Error: origin is not defined",
+      "checks": [],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_01_new_logo.png",
+          "label": "New store header"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_02_hours.png",
+          "label": "Store hours area (footer)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_04_shop_purpose.png",
+          "label": "Homepage (Shop with Purpose check)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_05_footer.png",
+          "label": "Footer links"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_05_price_match.png",
+          "label": "Price Match Guarantee page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_06_accessibility.png",
+          "label": "Accessibility / Browser Support page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_07_incoming_students.png",
+          "label": "New Students & Parents page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_08_delivery_faq.png",
+          "label": "Delivery Options FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_09_payments_faq.png",
+          "label": "Payments Accepted FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_10_returns.png",
+          "label": "Returns page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_11_faq.png",
+          "label": "Help/FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_12_sell_textbooks.png",
+          "label": "Sell Your Textbooks page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_13_textbook_faq.png",
+          "label": "Textbook FAQs page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_14_rentals_faq.png",
+          "label": "Rentals FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_15_digital_faq.png",
+          "label": "Digital Materials FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_18_cookie_modal.png",
+          "label": "Cookie Preference modal"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_20_find_textbooks.png",
+          "label": "Find Your Textbooks page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_21_store_hours_page.png",
+          "label": "Store Hours page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_01_new_logo.png",
+          "label": "New store header"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_02_hours.png",
+          "label": "Store hours area (footer)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_04_shop_purpose.png",
+          "label": "Homepage (Shop with Purpose check)"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_05_footer.png",
+          "label": "Footer links"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_05_price_match.png",
+          "label": "Price Match Guarantee page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_06_accessibility.png",
+          "label": "Accessibility / Browser Support page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_07_incoming_students.png",
+          "label": "New Students & Parents page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_08_delivery_faq.png",
+          "label": "Delivery Options FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_09_payments_faq.png",
+          "label": "Payments Accepted FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_10_returns.png",
+          "label": "Returns page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_11_faq.png",
+          "label": "Help/FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_12_sell_textbooks.png",
+          "label": "Sell Your Textbooks page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_13_textbook_faq.png",
+          "label": "Textbook FAQs page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_14_rentals_faq.png",
+          "label": "Rentals FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_15_digital_faq.png",
+          "label": "Digital Materials FAQ page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_18_cookie_modal.png",
+          "label": "Cookie Preference modal"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_20_find_textbooks.png",
+          "label": "Find Your Textbooks page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_21_store_hours_page.png",
+          "label": "Store Hours page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_page-content-migration_error.png",
+          "label": "Error state"
+        }
+      ],
+      "timestamp": "2026-03-25T02:13:49.204Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "homepage-plp-pdp",
+      "passed": true,
+      "message": "All 6 Homepage/PLP/PDP checks passed.",
+      "checks": [
+        {
+          "num": 1,
+          "name": "Homepage Banner Links",
+          "passed": true,
+          "detail": "Banner links to internal URLs: /collections/apple?filter.v.availability=1&filter.p.tag=has-image&filter.p.tag=adoptedtitle, /collections/all?filter.v.availability=1&filter.p.tag=has-image&filter.p.tag=adoptedtitle"
+        },
+        {
+          "num": 2,
+          "name": "Homepage Ad (Freestar)",
+          "passed": true,
+          "detail": "Ad infrastructure found. Elements: 3, IDs: hot-reload-client, shopify-section-template--21789124559067__freestar_storehome_mid_4, shopify-section-template--21789124559067__freestar_storehome_bottom_5"
+        },
+        {
+          "num": 3,
+          "name": "Collection Ad (Freestar)",
+          "passed": true,
+          "detail": "Ad infrastructure found. Elements: 2, IDs: hot-reload-client, shopify-section-template--21789124526299__contentstack_freestar_section_BxJ4zx"
+        },
+        {
+          "num": 4,
+          "name": "Collection Filters",
+          "passed": true,
+          "detail": "Filters found: 21 filter elements. Labels present: true"
+        },
+        {
+          "num": 5,
+          "name": "No Gift Cards in Nav",
+          "passed": true,
+          "detail": "Gift Cards NOT found in navigation — correct"
+        },
+        {
+          "num": 6,
+          "name": "Color Swatches (Names)",
+          "passed": true,
+          "detail": "Color names found: Royal Blue, Royal Blue, Royal Blue. Swatch bubbles: 0"
+        }
+      ],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_homepage-plp-pdp_01_homepage.png",
+          "label": "Homepage"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_homepage-plp-pdp_02_collection.png",
+          "label": "Collection page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_homepage-plp-pdp_03_filters.png",
+          "label": "Collection filters"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_homepage-plp-pdp_04_navigation.png",
+          "label": "Navigation"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_homepage-plp-pdp_05_swatch_product_1.png",
+          "label": "Product with colors (#1)"
+        }
+      ],
+      "timestamp": "2026-03-25T02:14:10.659Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "course-materials",
+      "passed": true,
+      "message": "Course Materials flow works. Added 5 courses, found textbooks in 5, added 5 to cart.",
+      "checks": [],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_02_course_materials_page.png",
+          "label": "Course Materials page"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_03_course_1.png",
+          "label": "Course added: 804 118 §030"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_04_cart_add_1.png",
+          "label": "Cart add: 804 118 §030"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_03_course_2.png",
+          "label": "Course added: 812 421 §030"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_04_cart_add_2.png",
+          "label": "Cart add: 812 421 §030"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_03_course_3.png",
+          "label": "Course added: 512 142 §030"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_04_cart_add_3.png",
+          "label": "Cart add: 512 142 §030"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_03_course_4.png",
+          "label": "Course added: 838 104 §033"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_04_cart_add_4.png",
+          "label": "Cart add: 838 104 §033"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_03_course_5.png",
+          "label": "Course added: 412 477 §030"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_04_cart_add_5.png",
+          "label": "Cart add: 412 477 §030"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_course-materials_05_summary.png",
+          "label": "Final state"
+        }
+      ],
+      "timestamp": "2026-03-25T02:16:23.270Z"
+    },
+    {
+      "store": "https://bkstr-0125.myshopify.com/?_ab=0&_fd=0&_sc=1&key=ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8&preview_theme_id=159992578267",
+      "testId": "inventory",
+      "passed": true,
+      "message": "Inventory check: 15/15 passed. Stock: No out-of-stock items found. Nav: All links valid.",
+      "checks": [
+        {
+          "name": "Category \"Health, Wellness & Beauty\" Stock",
+          "passed": true,
+          "detail": "72 products displayed — none out of stock"
+        },
+        {
+          "name": "Category \"Clothing & Accessories\" Stock",
+          "passed": true,
+          "detail": "72 products displayed — none out of stock"
+        },
+        {
+          "name": "Category \"Books, Music & Games\" Stock",
+          "passed": true,
+          "detail": "72 products displayed — none out of stock"
+        },
+        {
+          "name": "Category \"Sale & Clearance\" Stock",
+          "passed": true,
+          "detail": "No product cards found on this page (may be a landing page)"
+        },
+        {
+          "name": "Category \"Gifts & Collectibles\" Stock",
+          "passed": true,
+          "detail": "72 products displayed — none out of stock"
+        },
+        {
+          "name": "Nav Link \"Accessibility\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/pages/faq-accessibility-browser-support"
+        },
+        {
+          "name": "Nav Link \"Sell Your Textbooks\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/pages/faq-sell-your-textbooks"
+        },
+        {
+          "name": "Nav Link \"In-Store Price Match Guarantee\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/pages/price-match-guarantee"
+        },
+        {
+          "name": "Nav Link \"Delivery Options\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/pages/faq-shipping-delivery"
+        },
+        {
+          "name": "Nav Link \"New Arrivals\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/collections/new-arrivals"
+        },
+        {
+          "name": "Nav Link \"Help/FAQ\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/pages/faq"
+        },
+        {
+          "name": "Nav Link \"Contact\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/pages/contact"
+        },
+        {
+          "name": "Nav Link \"Textbook FAQs\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/pages/faq-textbooks"
+        },
+        {
+          "name": "Nav Link \"Electronics\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/collections/electronics"
+        },
+        {
+          "name": "Nav Link \"Site Map\"",
+          "passed": true,
+          "detail": "Page loads (status: 200): https://bkstr-0125.myshopify.com/pages/sitemap"
+        }
+      ],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_inventory_01_cat_1.png",
+          "label": "Category: Health, Wellness & Beauty"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_inventory_01_cat_2.png",
+          "label": "Category: Clothing & Accessories"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_inventory_01_cat_3.png",
+          "label": "Category: Books, Music & Games"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_inventory_01_cat_4.png",
+          "label": "Category: Sale & Clearance"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_inventory_01_cat_5.png",
+          "label": "Category: Gifts & Collectibles"
+        },
+        {
+          "src": "/screenshots/https___bkstr_0125_myshopify_com___ab_0__fd_0__sc_1_key_ef38c2ff4a5fed46f3d91e89a10806f390b37ee011cb3fa7849d102ebbdc83d8_preview_theme_id_159992578267_inventory_03_summary.png",
+          "label": "Store homepage (summary)"
+        }
+      ],
+      "timestamp": "2026-03-25T02:17:11.836Z"
+    }
+  ],
+  "status": "complete",
+  "completedAt": "2026-03-25T02:17:11.899Z"
+}
