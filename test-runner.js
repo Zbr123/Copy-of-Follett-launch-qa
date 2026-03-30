@@ -1773,6 +1773,24 @@ async function testPageContentMigration(page, store, emit) {
   const country = isCanada ? 'Canada' : 'US';
   emit({ step: `Detected store country: ${country}` });
 
+  // ── GUARD: Fail immediately if old bkstr.com content is detected ──
+  emit({ step: 'Guard check: Verifying no legacy bkstr.com content...' });
+  const hasBkstrFooter = footerText.toLowerCase().includes('tcu@bkstr.com');
+  let hasBkstrHoursPage = false;
+  try {
+    const hoursResp = await page.goto(`${newOrigin}/pages/view-store-hours`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(2000);
+    const hoursBodyText = await getBodyText(page);
+    hasBkstrHoursPage = hoursBodyText.toLowerCase().includes('tcu@bkstr.com');
+  } catch { /* page may not exist — that's fine */ }
+
+  if (hasBkstrFooter || hasBkstrHoursPage) {
+    const locations = [hasBkstrFooter && 'footer', hasBkstrHoursPage && '/pages/view-store-hours'].filter(Boolean).join(' and ');
+    record('No Legacy bkstr.com Content', false, `Found "tcu@bkstr.com" in ${locations} — wrong store content detected`);
+  } else {
+    record('No Legacy bkstr.com Content', true, 'No legacy tcu@bkstr.com content found in footer or store hours page');
+  }
+
   // ── Check 1: Correct store logo displayed ──
   emit({ step: 'Check 1: Verifying store logo...' });
   // Get new store logo
