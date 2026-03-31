@@ -18,11 +18,56 @@ async function isCloudflareChallenge(page) {
       content.includes('Just a moment') ||
       content.includes('Verify you are human') ||
       content.includes('needs to be verified before you can proceed') ||
-      content.includes('challenges.cloudflare.com')
+      content.includes('challenges.cloudflare.com') ||
+      content.includes('cf-turnstile') ||
+      content.includes('turnstile/v0/api.js') ||
+      content.includes('cf-please-wait') ||
+      content.includes('cf-spinner')
     );
   } catch {
     return false;
   }
+}
+
+/**
+ * Attempt to solve a Cloudflare Turnstile challenge by clicking the checkbox
+ * inside the Turnstile iframe, then wait for the page to proceed.
+ */
+async function trySolveTurnstile(page, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    try {
+      // Look for the Turnstile iframe
+      const frames = page.frames();
+      for (const frame of frames) {
+        const url = frame.url();
+        if (url.includes('challenges.cloudflare.com') || url.includes('turnstile')) {
+          // Try to click the checkbox inside the iframe
+          const checkbox = await frame.$('input[type="checkbox"], .cb-i, #challenge-stage');
+          if (checkbox) {
+            await checkbox.click().catch(() => {});
+            await page.waitForTimeout(2000);
+          }
+          // Also try clicking in the center of the iframe element on the parent page
+          const iframeHandle = await page.$('iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]');
+          if (iframeHandle) {
+            const box = await iframeHandle.boundingBox();
+            if (box) {
+              await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+              await page.waitForTimeout(2000);
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // Check if the challenge has resolved
+    if (!(await isCloudflareChallenge(page))) return true;
+    await page.waitForTimeout(2000);
+  }
+
+  return !(await isCloudflareChallenge(page));
 }
 
 
@@ -831,19 +876,29 @@ async function testDigitalDeliveryFee(page, store, emit) {
   }
 
   // Step 3: Wait for Digital Delivery Fee to auto-add, then check cart
+  // The fee is added asynchronously by Shopify scripts — poll until it appears
   emit({ step: 'Waiting for Digital Delivery Fee to be auto-added to cart...' });
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(3000);
 
   let cartData = null;
-  for (let poll = 0; poll < 3; poll++) {
+  const MAX_FEE_POLLS = 8;
+  for (let poll = 0; poll < MAX_FEE_POLLS; poll++) {
     try {
       cartData = await page.evaluate(async () => {
         const res = await fetch('/cart.json');
         return await res.json();
       });
-      if (cartData && cartData.item_count >= 2) break;
+      // Specifically check for the delivery fee item, not just item count
+      const hasFee = cartData && cartData.items && cartData.items.some(i =>
+        ((i.title || i.product_title || '') + ' ' + (i.variant_title || '')).toUpperCase().includes('DIGITAL DELIVERY FEE')
+      );
+      if (hasFee) {
+        emit({ step: `Digital Delivery Fee detected in cart (poll ${poll + 1}/${MAX_FEE_POLLS})` });
+        break;
+      }
+      emit({ step: `Poll ${poll + 1}/${MAX_FEE_POLLS}: ${cartData ? cartData.item_count : 0} item(s) — fee not yet present, waiting...` });
     } catch {}
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
   }
 
   const bagCount = cartData ? cartData.item_count : 0;
@@ -894,7 +949,18 @@ async function testDigitalDeliveryFee(page, store, emit) {
   // Step 4: Proceed to checkout
   emit({ step: 'Navigating to checkout...' });
   await page.goto(`${origin}/checkout`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(3000);
+
+  // Wait for checkout to fully render (same robust approach as pickup test)
+  try {
+    await page.waitForSelector(
+      'input[type="email"], input[type="text"], [class*="checkout"], [class*="order-summary"]',
+      { timeout: 20000 }
+    );
+  } catch {}
+  await page.waitForTimeout(5000);
+  try {
+    await page.waitForLoadState('networkidle', { timeout: 15000 });
+  } catch {}
 
   const checkoutShot = screenshotPath(store.newStore, 'digital-delivery-fee', '05_checkout');
   await page.screenshot({ path: checkoutShot, fullPage: false });
@@ -1496,7 +1562,26 @@ async function testPickupNameValidation(page, store, emit) {
   await page.goto(`${origin}/checkout`, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
   emit({ step: 'Waiting for checkout to fully load...' });
-  await page.waitForTimeout(4000);
+
+  // Wait for actual checkout elements to render — not just a fixed timeout
+  try {
+    await page.waitForSelector(
+      'input[type="email"], input[type="text"], [data-delivery-group], label:has-text("Ship"), label:has-text("Pick up"), [class*="delivery"], [class*="checkout"]',
+      { timeout: 20000 }
+    );
+    emit({ step: 'Checkout form elements detected.' });
+  } catch {
+    emit({ step: 'Checkout elements not found via selector — using fallback wait...' });
+  }
+  // Extra settle time for Shopify checkout JS to fully hydrate
+  await page.waitForTimeout(5000);
+
+  // Wait for network idle — checkout pages do a lot of async loading
+  try {
+    await page.waitForLoadState('networkidle', { timeout: 15000 });
+  } catch {
+    // networkidle can be flaky — don't fail on it
+  }
 
   const checkoutShot = screenshotPath(store.newStore, 'pickup-name-validation', '02_checkout');
   await page.screenshot({ path: checkoutShot, fullPage: false });
@@ -1576,7 +1661,18 @@ async function testPickupNameValidation(page, store, emit) {
 
   // Wait for pickup locations to load
   emit({ step: 'Waiting for pickup locations to load...' });
-  await page.waitForTimeout(3000);
+  try {
+    await page.waitForSelector(
+      '[class*="pickup"], [class*="location"], [data-pickup], [data-location]',
+      { timeout: 10000 }
+    );
+  } catch {
+    emit({ step: 'Pickup location elements not found via selector — using fallback wait...' });
+  }
+  await page.waitForTimeout(5000);
+  try {
+    await page.waitForLoadState('networkidle', { timeout: 10000 });
+  } catch {}
 
   const pickupShot = screenshotPath(store.newStore, 'pickup-name-validation', '03_pickup_selected');
   await page.screenshot({ path: pickupShot, fullPage: false });
@@ -3105,45 +3201,54 @@ async function runStoreTests(browser, store, testIds, sendEvent) {
     viewport: { width: 1920, height: 1080 },
     deviceScaleFactor: 2,
     userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
   });
   const page = await context.newPage();
 
   // Patch page.goto to automatically handle Cloudflare challenges
   const originalGoto = page.goto.bind(page);
+  const MAX_CF_RETRIES = 3;
   page.goto = async function (url, options = {}) {
-    const response = await originalGoto(url, options);
-    if (await isCloudflareChallenge(page)) {
-      sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: 'Cloudflare challenge detected — waiting for auto-resolve...' });
+    let response = await originalGoto(url, options);
+
+    for (let attempt = 0; attempt < MAX_CF_RETRIES; attempt++) {
+      if (!(await isCloudflareChallenge(page))) return response;
+
+      sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: `Cloudflare challenge detected (attempt ${attempt + 1}/${MAX_CF_RETRIES}) — trying to resolve...` });
+
+      // Step 1: Try clicking the Turnstile checkbox if present
+      const solved = await trySolveTurnstile(page, 15000);
+      if (solved) {
+        sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: 'Cloudflare challenge resolved via Turnstile.' });
+        await page.waitForTimeout(2000);
+        return response;
+      }
+
+      // Step 2: Wait for auto-resolve (some challenges resolve without interaction)
       try {
         await page.waitForFunction(
           () => !document.body.innerText.includes('Verify you are human') &&
                 !document.body.innerText.includes('Just a moment') &&
-                !document.body.innerText.includes('needs to be verified'),
-          { timeout: 15000 }
+                !document.body.innerText.includes('needs to be verified') &&
+                !document.body.innerText.includes('Checking your browser'),
+          { timeout: 30000 }
         );
-        await page.waitForTimeout(2000);
-      } catch {
-        // Retry the navigation once after a delay
-        sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: 'Challenge persisted — retrying navigation...' });
-        await page.waitForTimeout(5000);
-        const retryResponse = await originalGoto(url, options);
-        if (await isCloudflareChallenge(page)) {
-          try {
-            await page.waitForFunction(
-              () => !document.body.innerText.includes('Verify you are human') &&
-                    !document.body.innerText.includes('Just a moment') &&
-                    !document.body.innerText.includes('needs to be verified'),
-              { timeout: 15000 }
-            );
-            await page.waitForTimeout(2000);
-          } catch {
-            // Exhausted retries — proceed and let the test handle the failure
-          }
-        }
-        return retryResponse;
-      }
+        await page.waitForTimeout(3000);
+        if (!(await isCloudflareChallenge(page))) return response;
+      } catch {}
+
+      // Step 3: Retry the full navigation with a backoff delay
+      const backoff = (attempt + 1) * 5000;
+      sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: `Challenge persisted — waiting ${backoff / 1000}s before retry...` });
+      await page.waitForTimeout(backoff);
+      response = await originalGoto(url, options);
     }
+
+    // Final check — if still stuck, log it but don't crash
+    if (await isCloudflareChallenge(page)) {
+      sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: `Cloudflare challenge could not be resolved after ${MAX_CF_RETRIES} attempts — proceeding anyway.` });
+    }
+
     return response;
   };
 
@@ -3582,6 +3687,10 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     args: [
       '--disable-blink-features=AutomationControlled',
       '--no-sandbox',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-setuid-sandbox',
+      '--window-size=1920,1080',
     ],
   });
 
