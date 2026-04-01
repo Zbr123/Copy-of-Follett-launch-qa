@@ -326,100 +326,163 @@ async function testCollectionPage(page, store, emit) {
 }
 
 async function testCartAdd(page, store, emit) {
-  emit({ step: 'Finding a product to add to cart...' });
-
   const origin = storeOrigin(store.newStore);
+  const MAX_PRODUCTS = 10;
 
-  // Navigate to collections/all to find a product
-  await page.goto(`${origin}/collections/all`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  // Clear cart first so we can verify a fresh add
+  emit({ step: 'Clearing cart...' });
+  await page.evaluate(async (o) => {
+    await fetch(o + '/cart/clear.js', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  }, origin).catch(() => {});
+  await page.waitForTimeout(500);
+
+  // Navigate to collections/all to find products
+  emit({ step: 'Finding a product to add to cart...' });
+  const collectionUrl = `${origin}/collections/all`;
+  await page.goto(collectionUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);
-
-  // Find first visible product link
-  const productLinks = await page.$$('a[href*="/products/"]');
-  let href = null;
-  for (const link of productLinks) {
-    const visible = await link.isVisible().catch(() => false);
-    if (!visible) continue;
-    href = await link.getAttribute('href');
-    if (href) break;
-  }
-
-  if (!href) {
-    return { passed: false, message: 'No visible product found to test add-to-cart' };
-  }
-
-  emit({ step: `Navigating to product: ${href}` });
-  await page.goto(href.startsWith('http') ? href : `${origin}${href}`, {
-    waitUntil: 'domcontentloaded',
-    timeout: 20000,
-  });
-  await page.waitForTimeout(1500);
-
-  const pdpShot = screenshotPath(store.newStore, 'cart-add', '01_product');
-  await page.screenshot({ path: pdpShot, fullPage: false });
-  emit({ screenshot: screenshotUrl(pdpShot), label: 'Product page' });
 
   // Hide Shopify preview bar if present
   await page.evaluate(() => {
     const bar = document.getElementById('preview-bar-iframe') || document.querySelector('[id*="preview-bar"]');
     if (bar) bar.style.display = 'none';
-    // Also hide any sticky bottom bars
-    const shopifyBar = document.querySelector('#shopify-section-header-group, .preview-bar');
-    if (shopifyBar) shopifyBar.style.position = 'relative';
   });
 
-  // Click add to cart/bag using page.evaluate to avoid interception
-  emit({ step: 'Clicking Add to Cart/Bag...' });
-  const addClicked = await page.evaluate(() => {
-    const buttons = document.querySelectorAll('button, input[type="submit"]');
-    for (const btn of buttons) {
-      const text = (btn.textContent || btn.value || '').trim().toUpperCase();
-      if ((text.includes('ADD TO BAG') || text.includes('ADD TO CART'))
-          && btn.offsetParent !== null && btn.offsetWidth > 0 && !btn.disabled) {
-        btn.click();
-        return text.substring(0, 30);
-      }
-    }
-    // Fallback: try form submit button
-    const form = document.querySelector('form[action*="/cart/add"]');
-    if (form) {
-      const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
-      if (submitBtn && submitBtn.offsetParent !== null) {
-        submitBtn.click();
-        return 'FORM SUBMIT';
-      }
-    }
-    return null;
-  });
+  let addedToCart = false;
 
-  if (!addClicked) {
-    return { passed: false, message: 'Could not find Add to Cart/Bag button' };
+  for (let attempt = 0; attempt < MAX_PRODUCTS; attempt++) {
+    if (attempt > 0) {
+      await page.goto(collectionUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(2000);
+    }
+
+    // Get visible product links
+    const productLinks = await page.$$('a[href*="/products/"]');
+    const visibleLinks = [];
+    const seenPaths = new Set();
+
+    for (const link of productLinks) {
+      const visible = await link.isVisible().catch(() => false);
+      if (!visible) continue;
+      const href = await link.getAttribute('href');
+      const cleanPath = href.split('?')[0];
+      if (seenPaths.has(cleanPath)) continue;
+      seenPaths.add(cleanPath);
+      visibleLinks.push(href);
+    }
+
+    if (attempt >= visibleLinks.length) {
+      emit({ step: `Only ${visibleLinks.length} products available — no more to try` });
+      break;
+    }
+
+    const productHref = visibleLinks[attempt];
+    const productUrl = productHref.startsWith('http') ? productHref : `${origin}${productHref}`;
+    emit({ step: `[Product ${attempt + 1}] Trying: ${productHref}` });
+    await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(1500);
+
+    // Hide Shopify preview bar
+    await page.evaluate(() => {
+      const bar = document.getElementById('preview-bar-iframe') || document.querySelector('[id*="preview-bar"]');
+      if (bar) bar.style.display = 'none';
+    });
+
+    if (attempt === 0) {
+      const pdpShot = screenshotPath(store.newStore, 'cart-add', '01_product');
+      await page.screenshot({ path: pdpShot, fullPage: false });
+      emit({ screenshot: screenshotUrl(pdpShot), label: 'Product page' });
+    }
+
+    // Try selecting a Buy/Rent option if present
+    const allElements = await page.$$('label, input[type="checkbox"], input[type="radio"]');
+    for (const el of allElements) {
+      const text = await el.textContent().catch(() => '');
+      const upperText = (text || '').toUpperCase().trim();
+      if (/^(BUY|RENT)(\s|$)/.test(upperText) || upperText.includes('BUY NEW') || upperText.includes('BUY USED') || upperText.includes('RENT NEW') || upperText.includes('RENT USED')) {
+        const vis = await el.isVisible().catch(() => false);
+        if (vis) {
+          try { await el.click({ timeout: 3000 }); } catch {}
+          await page.waitForTimeout(500);
+          break;
+        }
+      }
+    }
+
+    // Click add to cart/bag
+    const addClicked = await page.evaluate(() => {
+      const buttons = document.querySelectorAll('button, input[type="submit"]');
+      for (const btn of buttons) {
+        const text = (btn.textContent || btn.value || '').trim().toUpperCase();
+        if ((text.includes('ADD TO BAG') || text.includes('ADD TO CART'))
+            && !text.includes('ADD COURSE')
+            && btn.offsetParent !== null && btn.offsetWidth > 0 && !btn.disabled) {
+          btn.click();
+          return text.substring(0, 30);
+        }
+      }
+      // Fallback: try form submit button
+      const form = document.querySelector('form[action*="/cart/add"]');
+      if (form) {
+        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+        if (submitBtn && submitBtn.offsetParent !== null && !submitBtn.disabled) {
+          submitBtn.click();
+          return 'FORM SUBMIT';
+        }
+      }
+      return null;
+    });
+
+    if (!addClicked) {
+      emit({ step: `[Product ${attempt + 1}] Add button not found or disabled — trying next...` });
+      continue;
+    }
+
+    emit({ step: `[Product ${attempt + 1}] Clicked: "${addClicked}"` });
+    await page.waitForTimeout(2500);
+
+    // Close cart drawer if it opened
+    await page.evaluate(() => {
+      const closeBtn = document.querySelector('.cart-drawer__close, [aria-label="Close cart"], button.close, .drawer__close');
+      if (closeBtn) closeBtn.click();
+      const dialog = document.querySelector('dialog[open].cart-drawer__dialog');
+      if (dialog && dialog.close) dialog.close();
+    });
+    await page.waitForTimeout(500);
+
+    // Verify cart actually has items via API
+    const cartData = await page.evaluate(async () => {
+      const res = await fetch('/cart.json');
+      return await res.json();
+    }).catch(() => null);
+
+    if (cartData && cartData.item_count > 0) {
+      addedToCart = true;
+      emit({ step: `[Product ${attempt + 1}] Cart confirmed: ${cartData.item_count} item(s)` });
+
+      const cartShot = screenshotPath(store.newStore, 'cart-add', '02_after_add');
+      await page.screenshot({ path: cartShot, fullPage: false });
+      emit({ screenshot: screenshotUrl(cartShot), label: 'After Add to Cart' });
+      break;
+    }
+
+    emit({ step: `[Product ${attempt + 1}] Cart still empty after add — trying next...` });
   }
 
-  emit({ step: `Clicked: "${addClicked}"` });
-  await page.waitForTimeout(2000);
+  if (!addedToCart) {
+    const failShot = screenshotPath(store.newStore, 'cart-add', '02_no_add');
+    await page.screenshot({ path: failShot, fullPage: false });
+    emit({ screenshot: screenshotUrl(failShot), label: 'Could not add any item' });
+    return { passed: false, message: `Tried ${MAX_PRODUCTS} products from /collections/all — none could be added to cart` };
+  }
 
-  // Close cart drawer if it opened
-  await page.evaluate(() => {
-    const closeBtn = document.querySelector('.cart-drawer__close, [aria-label="Close cart"], button.close, .drawer__close');
-    if (closeBtn) closeBtn.click();
-    const dialog = document.querySelector('dialog[open].cart-drawer__dialog');
-    if (dialog && dialog.close) dialog.close();
-  });
-
-  const cartShot = screenshotPath(store.newStore, 'cart-add', '02_after_add');
-  await page.screenshot({ path: cartShot, fullPage: false });
-  emit({ screenshot: screenshotUrl(cartShot), label: 'After Add to Cart' });
-
-  // Verify cart has items
-  const cartRes = await page.goto(`${storeOrigin(store.newStore)}/cart.json`, { waitUntil: 'domcontentloaded', timeout: 10000 });
-  const cartData = await cartRes.json().catch(() => null);
+  const cartData = await page.evaluate(async () => {
+    const res = await fetch('/cart.json');
+    return await res.json();
+  }).catch(() => null);
   const itemCount = cartData?.item_count || 0;
 
-  if (itemCount > 0) {
-    return { passed: true, message: `Add to cart successful. Cart has ${itemCount} item(s).` };
-  }
-  return { passed: false, message: 'Add to cart clicked but cart is empty' };
+  return { passed: true, message: `Add to cart successful. Cart has ${itemCount} item(s).` };
 }
 
 async function testRentalCollateral(page, store, emit) {
@@ -1017,8 +1080,9 @@ async function testCheckoutValidation(page, store, emit) {
   await page.waitForTimeout(2000);
 
   let addedToCart = false;
+  const MAX_PRODUCTS = 10;
 
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < MAX_PRODUCTS; attempt++) {
     if (attempt > 0) {
       await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
       await page.waitForTimeout(2000);
@@ -1038,7 +1102,10 @@ async function testCheckoutValidation(page, store, emit) {
       visibleLinks.push(href);
     }
 
-    if (attempt >= visibleLinks.length) break;
+    if (attempt >= visibleLinks.length) {
+      emit({ step: `Only ${visibleLinks.length} products available — no more to try` });
+      break;
+    }
 
     const productHref = visibleLinks[attempt];
     const productUrl = productHref.startsWith('http') ? productHref : `${origin}${productHref}`;
@@ -1072,9 +1139,30 @@ async function testCheckoutValidation(page, store, emit) {
       if (!isDisabled) {
         emit({ step: `[Product ${attempt + 1}] Clicking Add to Bag...` });
         await addBtn.click();
-        await page.waitForTimeout(2000);
-        addedToCart = true;
-        break;
+        await page.waitForTimeout(2500);
+
+        // Close cart drawer if it opened
+        await page.evaluate(() => {
+          const closeBtn = document.querySelector('.cart-drawer__close, [aria-label="Close cart"], button.close, .drawer__close');
+          if (closeBtn) closeBtn.click();
+          const dialog = document.querySelector('dialog[open].cart-drawer__dialog');
+          if (dialog && dialog.close) dialog.close();
+        });
+        await page.waitForTimeout(500);
+
+        // Verify cart actually has items
+        const cartData = await page.evaluate(async () => {
+          const res = await fetch('/cart.json');
+          return await res.json();
+        }).catch(() => null);
+
+        if (cartData && cartData.item_count > 0) {
+          addedToCart = true;
+          emit({ step: `[Product ${attempt + 1}] Cart confirmed: ${cartData.item_count} item(s)` });
+          break;
+        }
+        emit({ step: `[Product ${attempt + 1}] Cart still empty after add — trying next...` });
+        continue;
       }
     }
 
@@ -1085,7 +1173,7 @@ async function testCheckoutValidation(page, store, emit) {
     const failShot = screenshotPath(store.newStore, 'checkout-validation', '01_no_add');
     await page.screenshot({ path: failShot, fullPage: false });
     emit({ screenshot: screenshotUrl(failShot), label: 'Could not add any item' });
-    return { passed: false, message: 'Could not add any item to cart to test checkout' };
+    return { passed: false, message: `Tried ${MAX_PRODUCTS} products — could not add any item to cart` };
   }
 
   // Step 2: Navigate to checkout
@@ -1093,7 +1181,16 @@ async function testCheckoutValidation(page, store, emit) {
   await page.goto(`${origin}/checkout`, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
   emit({ step: 'Waiting for checkout to fully load...' });
-  await page.waitForTimeout(4000);
+  try {
+    await page.waitForSelector(
+      'input[type="email"], input[type="text"], [data-delivery-group], label:has-text("Ship"), [class*="checkout"]',
+      { timeout: 20000 }
+    );
+  } catch {}
+  await page.waitForTimeout(5000);
+  try {
+    await page.waitForLoadState('networkidle', { timeout: 15000 });
+  } catch {}
 
   const checkoutShot = screenshotPath(store.newStore, 'checkout-validation', '02_checkout');
   await page.screenshot({ path: checkoutShot, fullPage: false });
@@ -1478,6 +1575,7 @@ async function testCheckoutValidation(page, store, emit) {
 
 async function testPickupNameValidation(page, store, emit) {
   const origin = storeOrigin(store.newStore);
+  const MAX_PRODUCTS = 10;
 
   // Step 1: Add any item to cart
   emit({ step: 'Finding a product to add to cart...' });
@@ -1487,7 +1585,7 @@ async function testPickupNameValidation(page, store, emit) {
 
   let addedToCart = false;
 
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < MAX_PRODUCTS; attempt++) {
     if (attempt > 0) {
       await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
       await page.waitForTimeout(2000);
@@ -1507,7 +1605,10 @@ async function testPickupNameValidation(page, store, emit) {
       visibleLinks.push(href);
     }
 
-    if (attempt >= visibleLinks.length) break;
+    if (attempt >= visibleLinks.length) {
+      emit({ step: `Only ${visibleLinks.length} products available — no more to try` });
+      break;
+    }
 
     const productHref = visibleLinks[attempt];
     const productUrl = productHref.startsWith('http') ? productHref : `${origin}${productHref}`;
@@ -1541,9 +1642,30 @@ async function testPickupNameValidation(page, store, emit) {
       if (!isDisabled) {
         emit({ step: `[Product ${attempt + 1}] Clicking Add to Bag...` });
         await addBtn.click();
-        await page.waitForTimeout(2000);
-        addedToCart = true;
-        break;
+        await page.waitForTimeout(2500);
+
+        // Close cart drawer if it opened
+        await page.evaluate(() => {
+          const closeBtn = document.querySelector('.cart-drawer__close, [aria-label="Close cart"], button.close, .drawer__close');
+          if (closeBtn) closeBtn.click();
+          const dialog = document.querySelector('dialog[open].cart-drawer__dialog');
+          if (dialog && dialog.close) dialog.close();
+        });
+        await page.waitForTimeout(500);
+
+        // Verify cart actually has items
+        const cartData = await page.evaluate(async () => {
+          const res = await fetch('/cart.json');
+          return await res.json();
+        }).catch(() => null);
+
+        if (cartData && cartData.item_count > 0) {
+          addedToCart = true;
+          emit({ step: `[Product ${attempt + 1}] Cart confirmed: ${cartData.item_count} item(s)` });
+          break;
+        }
+        emit({ step: `[Product ${attempt + 1}] Cart still empty after add — trying next...` });
+        continue;
       }
     }
 
@@ -1554,7 +1676,7 @@ async function testPickupNameValidation(page, store, emit) {
     const failShot = screenshotPath(store.newStore, 'pickup-name-validation', '01_no_add');
     await page.screenshot({ path: failShot, fullPage: false });
     emit({ screenshot: screenshotUrl(failShot), label: 'Could not add any item' });
-    return { passed: false, message: 'Could not add any item to cart to test checkout' };
+    return { passed: false, message: `Tried ${MAX_PRODUCTS} products — could not add any item to cart` };
   }
 
   // Step 2: Navigate to checkout
