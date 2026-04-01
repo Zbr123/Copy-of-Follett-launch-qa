@@ -1860,6 +1860,9 @@ async function testPageContentMigration(page, store, emit) {
   await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);
 
+  // Hide Shopify preview bar throughout this test — it overlaps footer content
+  await hidePreviewBar();
+
   const footerText = await page.evaluate(() => {
     const footer = document.querySelector('footer');
     return footer ? footer.innerText : document.body.innerText.slice(-2000);
@@ -1910,11 +1913,12 @@ async function testPageContentMigration(page, store, emit) {
   // ── Check 2: Store hours displayed correctly ──
   emit({ step: 'Check 2: Verifying store hours...' });
   await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(2000);
+  await hidePreviewBar();
 
   // Scroll to footer to find store hours
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(1500);
 
   const bodyText = await getBodyText(page);
   const hasHours = /\d{1,2}(:\d{2})?\s*(am|pm|AM|PM)\s*(-|–|to)\s*\d{1,2}(:\d{2})?\s*(am|pm|AM|PM)/i.test(bodyText) ||
@@ -1959,22 +1963,78 @@ async function testPageContentMigration(page, store, emit) {
   await page.screenshot({ path: purposeShot, fullPage: false });
   emit({ screenshot: screenshotUrl(purposeShot), label: 'Homepage (Shop with Purpose check)' });
 
+  // ── Helper: hide Shopify preview bar so it doesn't overlap footer elements ──
+  async function hidePreviewBar() {
+    await page.evaluate(() => {
+      const selectors = [
+        '#preview-bar-iframe', '[id*="preview-bar"]', '#shopify-preview-bar',
+        '[id*="shopify-preview"]', 'iframe[src*="preview-bar"]',
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el) el.style.display = 'none';
+      }
+    });
+  }
+
   // ── Helper: go to homepage footer and gather all footer link info ──
   async function getFooterLinks() {
     await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
+
+    // Hide the preview bar so it doesn't cover footer elements
+    await hidePreviewBar();
+
+    // Scroll all the way to the absolute bottom to ensure lazy-loaded footer content appears
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
+    // Scroll again — some footers render extra content after the first scroll
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(1500);
 
     return await page.evaluate(() => {
+      const links = [];
+      const seen = new Set();
+
+      // Collect from <footer> element
       const footer = document.querySelector('footer');
-      if (!footer) return [];
-      const links = footer.querySelectorAll('a');
-      return Array.from(links).map(a => ({
-        text: (a.textContent || '').trim(),
-        href: a.getAttribute('href') || '',
-        visible: a.offsetParent !== null && a.offsetWidth > 0 && a.offsetHeight > 0,
-      }));
+      if (footer) {
+        for (const a of footer.querySelectorAll('a')) {
+          const text = (a.textContent || '').trim();
+          const href = a.getAttribute('href') || '';
+          const key = `${text}|${href}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          links.push({
+            text,
+            href,
+            visible: a.offsetParent !== null && a.offsetWidth > 0 && a.offsetHeight > 0,
+          });
+        }
+      }
+
+      // Also scan the bottom 25% of the page for links outside <footer>
+      // (OneTrust banners, cookie links, etc. are often outside the footer tag)
+      const allLinks = document.querySelectorAll('a, button');
+      const pageHeight = document.body.scrollHeight;
+      for (const el of allLinks) {
+        const rect = el.getBoundingClientRect();
+        const absTop = rect.top + window.scrollY;
+        // Only consider elements in the bottom quarter of the page
+        if (absTop < pageHeight * 0.75) continue;
+        const text = (el.textContent || '').trim();
+        const href = el.getAttribute('href') || el.getAttribute('onclick') || '';
+        const key = `${text}|${href}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        links.push({
+          text,
+          href,
+          visible: el.offsetParent !== null && el.offsetWidth > 0 && el.offsetHeight > 0,
+        });
+      }
+
+      return links;
     });
   }
 
@@ -1988,32 +2048,48 @@ async function testPageContentMigration(page, store, emit) {
   emit({ step: `Found ${footerLinks.length} links in footer` });
 
   // Helper: check if a link with matching text/href is visible in footer
+  // Matches if (text AND href both match) OR (href matches alone — covers icon-only links)
   function footerLinkExists(textPattern, hrefPattern) {
     return footerLinks.some(l => {
       const textMatch = textPattern ? textPattern.test(l.text) : true;
       const hrefMatch = hrefPattern ? hrefPattern.test(l.href) : true;
-      return l.visible && textMatch && hrefMatch;
+      // Primary: both text and href match and visible
+      if (l.visible && textMatch && hrefMatch) return true;
+      // Fallback: href matches even if text doesn't (icon-only links, or text rendered differently)
+      if (hrefMatch && hrefPattern && l.visible) return true;
+      return false;
     });
   }
 
-  // Helper: combined footer + page check
+  // Helper: combined footer + page check — wrapped in try/catch so one failure doesn't kill the whole test
   async function checkFooterAndPage(checkNumber, name, footerTextRegex, footerHrefRegex, pagePath, shotId) {
     emit({ step: `Check ${checkNumber}: Verifying ${name}...` });
 
-    const inFooter = footerLinkExists(footerTextRegex, footerHrefRegex);
-    const fullUrl = `${newOrigin}${pagePath}`;
-    const exists = await pageExists(page, fullUrl, name);
+    try {
+      const inFooter = footerLinkExists(footerTextRegex, footerHrefRegex);
+      const fullUrl = `${newOrigin}${pagePath}`;
+      let exists = false;
+      try {
+        exists = await pageExists(page, fullUrl, name);
+      } catch (navErr) {
+        emit({ step: `Check ${checkNumber}: Navigation to ${fullUrl} failed: ${navErr.message}` });
+      }
 
-    if (exists) {
-      const shot = screenshotPath(store.newStore, 'page-content-migration', shotId);
-      await page.screenshot({ path: shot, fullPage: false });
-      emit({ screenshot: screenshotUrl(shot), label: `${name} page` });
+      if (exists) {
+        try {
+          const shot = screenshotPath(store.newStore, 'page-content-migration', shotId);
+          await page.screenshot({ path: shot, fullPage: false });
+          emit({ screenshot: screenshotUrl(shot), label: `${name} page` });
+        } catch {}
+      }
+
+      const passed = inFooter && exists;
+      record(name, passed,
+        `Footer link: ${inFooter ? 'visible' : 'NOT found'}, Page at ${fullUrl}: ${exists ? 'loads' : 'NOT found'}`
+      );
+    } catch (err) {
+      record(name, false, `Error during check: ${err.message}`);
     }
-
-    const passed = inFooter && exists;
-    record(name, passed,
-      `Footer link: ${inFooter ? 'visible' : 'NOT found'}, Page at ${fullUrl}: ${exists ? 'loads' : 'NOT found'}`
-    );
   }
 
   // ── Check 5: Price Match Guarantee ──
@@ -2103,11 +2179,15 @@ async function testPageContentMigration(page, store, emit) {
   emit({ step: 'Check 18: Verifying Cookie Preference Policy footer link...' });
   // Navigate to homepage footer to click the link
   await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(2000);
+  await hidePreviewBar();
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForTimeout(1500);
 
-  const cookieLink = await page.$('footer a:has-text("Cookie"), footer button:has-text("Cookie")');
+  // Search both inside and outside <footer> — OneTrust links are often outside
+  const cookieLink = await page.$('footer a:has-text("Cookie"), footer button:has-text("Cookie"), a:has-text("Cookie Preference"), button:has-text("Cookie Preference"), .ot-sdk-show-settings, #ot-sdk-btn, [class*="onetrust"] a, [class*="onetrust"] button');
   const cookieVisible = cookieLink ? await cookieLink.isVisible().catch(() => false) : false;
 
   if (cookieVisible) {
@@ -2145,11 +2225,15 @@ async function testPageContentMigration(page, store, emit) {
   // ── Check 19: Do Not Sell link → opens OneTrust form ──
   emit({ step: 'Check 19: Verifying Do Not Sell footer link...' });
   await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(2000);
+  await hidePreviewBar();
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForTimeout(1500);
 
-  const dnsLink = await page.$('footer a:has-text("Do Not Sell"), footer button:has-text("Do Not Sell"), footer a:has-text("Do not sell")');
+  // Search everywhere on page — not just inside <footer>
+  const dnsLink = await page.$('footer a:has-text("Do Not Sell"), footer button:has-text("Do Not Sell"), footer a:has-text("Do not sell"), a:has-text("Do Not Sell"), button:has-text("Do Not Sell"), a:has-text("Do not sell")');
   const dnsVisible = dnsLink ? await dnsLink.isVisible().catch(() => false) : false;
 
   if (dnsVisible) {
@@ -2264,7 +2348,7 @@ async function testPageContentMigration(page, store, emit) {
   emit({ step: `Check ${checks.length + 1}: Checking footer email signup compliance message...` });
 
   // Navigate back to homepage to find the footer signup
-  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(3000);
 
   // Scroll to footer to ensure it loads
