@@ -13,11 +13,11 @@ RUN npm ci --production
 
 COPY . .
 
-# Persistent browser profile for sweeps. On Railway, attach a Railway
-# volume to /app/.browser-data (and ideally /app/runs, /app/screenshots,
-# /app/sweeps) via the dashboard — Railway bans the Dockerfile VOLUME
-# keyword and manages persistence externally.
-ENV SWEEP_USER_DATA_DIR=/app/.browser-data
+# All mutable state (runs, screenshots, sweeps, chromium profile) lives
+# under DATA_DIR so a single Railway volume mounted at /app/data persists
+# everything across redeploys. Railway bans the Dockerfile VOLUME keyword
+# and manages persistence via the dashboard instead.
+ENV DATA_DIR=/app/data
 
 EXPOSE ${PORT:-3847}
 

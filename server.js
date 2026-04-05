@@ -11,10 +11,17 @@ const PORT = process.env.PORT || 3847;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/screenshots', express.static(path.join(__dirname, 'screenshots')));
+
+// All mutable state lives under DATA_DIR so a single Railway volume at
+// /app/data can persist runs, screenshots, sweeps, and the chromium
+// profile across redeploys. Defaults to __dirname for local dev.
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const SCREENSHOTS_DIR = path.join(DATA_DIR, 'screenshots');
+if (!fs.existsSync(SCREENSHOTS_DIR)) fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+app.use('/screenshots', express.static(SCREENSHOTS_DIR));
 
 // ── Run history persistence ──
-const RUNS_DIR = path.join(__dirname, 'runs');
+const RUNS_DIR = path.join(DATA_DIR, 'runs');
 if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR, { recursive: true });
 
 // SSE endpoint for real-time test results
@@ -1223,7 +1230,7 @@ function runCleanup() {
   const cutoffMs = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const stats = { files: 0, dirs: 0, bytes: 0 };
   walkAndDeleteOld(RUNS_DIR, cutoffMs, stats);
-  walkAndDeleteOld(path.join(__dirname, 'screenshots'), cutoffMs, stats);
+  walkAndDeleteOld(SCREENSHOTS_DIR, cutoffMs, stats);
   if (stats.files > 0 || stats.dirs > 0) {
     const mb = (stats.bytes / 1024 / 1024).toFixed(1);
     console.log(`[cleanup] Deleted ${stats.files} files (${mb} MB) and ${stats.dirs} empty dirs older than ${RETENTION_DAYS} days.`);

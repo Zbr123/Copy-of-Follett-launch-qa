@@ -14,9 +14,10 @@ const fs = require('fs');
 const path = require('path');
 const { runTests } = require('./test-runner');
 
-const SWEEPS_DIR = path.join(__dirname, 'sweeps');
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const SWEEPS_DIR = path.join(DATA_DIR, 'sweeps');
 const SWEEPS_FILE = path.join(SWEEPS_DIR, 'sweeps.json');
-const RUNS_DIR = path.join(__dirname, 'runs');
+const RUNS_DIR = path.join(DATA_DIR, 'runs');
 
 const TICK_INTERVAL_MS = 30_000;   // check queue every 30s
 const DEFAULT_STORES_PER_HOUR = 2;  // ~48/day
@@ -39,7 +40,7 @@ const CF_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2 hours
 const BROWSER_OPTIONS = {
   endpoint: process.env.SWEEP_BROWSER_ENDPOINT || null,
   persistent: process.env.SWEEP_BROWSER_ENDPOINT ? false : true,
-  userDataDir: process.env.SWEEP_USER_DATA_DIR || path.join(__dirname, '.browser-data'),
+  userDataDir: process.env.SWEEP_USER_DATA_DIR || path.join(DATA_DIR, '.browser-data'),
   headful: process.env.SWEEP_BROWSER_HEADFUL === '1',
 };
 

@@ -3,7 +3,8 @@ const AxeBuilder = require('@axe-core/playwright');
 const path = require('path');
 const fs = require('fs');
 
-const SCREENSHOTS_DIR = path.join(__dirname, 'screenshots');
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const SCREENSHOTS_DIR = path.join(DATA_DIR, 'screenshots');
 if (!fs.existsSync(SCREENSHOTS_DIR)) fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 
 function screenshotPath(store, page, suffix) {

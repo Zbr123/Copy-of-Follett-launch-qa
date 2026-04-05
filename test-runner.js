@@ -71,7 +71,8 @@ async function trySolveTurnstile(page, timeout = 30000) {
 }
 
 
-const SCREENSHOTS_DIR = path.join(__dirname, 'screenshots');
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const SCREENSHOTS_DIR = path.join(DATA_DIR, 'screenshots');
 
 // Ensure screenshots dir exists
 if (!fs.existsSync(SCREENSHOTS_DIR)) {
@@ -3936,7 +3937,7 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     browser = await chromium.connect(options.endpoint);
     sendEvent({ type: 'browser-info', message: `Connected to remote browser: ${options.endpoint.replace(/\?.*$/, '')}` });
   } else if (options.persistent) {
-    const dataDir = options.userDataDir || path.join(__dirname, '.browser-data');
+    const dataDir = options.userDataDir || path.join(DATA_DIR, '.browser-data');
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     sharedContext = await chromium.launchPersistentContext(dataDir, {
       headless: !headful,
