@@ -21,9 +21,8 @@ ENV DATA_DIR=/app/data
 
 EXPOSE ${PORT:-3847}
 
-# Launch with Xvfb so SWEEP_BROWSER_HEADFUL=1 actually works. Headful
-# chromium has a meaningfully smaller CF fingerprint than headless, and
-# runs fine under a virtual display with zero user-visible difference.
-# Set SWEEP_BROWSER_HEADFUL=0 to skip Xvfb overhead if you prefer
-# headless-only.
-CMD ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24", "node", "server.js"]
+# Conditionally wrap node in xvfb-run only when headful mode is requested.
+# Headful chromium has a smaller CF fingerprint but needs a virtual
+# display; in headless mode (the default) xvfb is unnecessary and has
+# caused container boot failures on some hosts.
+CMD ["sh", "-c", "if [ \"$SWEEP_BROWSER_HEADFUL\" = \"1\" ]; then exec xvfb-run -a --server-args='-screen 0 1920x1080x24' node server.js; else exec node server.js; fi"]
