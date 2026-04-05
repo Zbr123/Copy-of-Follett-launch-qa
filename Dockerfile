@@ -13,10 +13,11 @@ RUN npm ci --production
 
 COPY . .
 
-# Persistent browser profile for sweeps — mount a volume here in
-# production so cf_clearance cookies survive container rebuilds.
+# Persistent browser profile for sweeps. On Railway, attach a Railway
+# volume to /app/.browser-data (and ideally /app/runs, /app/screenshots,
+# /app/sweeps) via the dashboard — Railway bans the Dockerfile VOLUME
+# keyword and manages persistence externally.
 ENV SWEEP_USER_DATA_DIR=/app/.browser-data
-VOLUME ["/app/.browser-data", "/app/runs", "/app/screenshots", "/app/sweeps"]
 
 EXPOSE ${PORT:-3847}
 
