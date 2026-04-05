@@ -1190,6 +1190,7 @@
     </div>
     <div class="nav-tabs">
       <button class="nav-tab active" onclick="switchView('runner')">Run Tests</button>
+      <button class="nav-tab" onclick="switchView('sweep')">Sweep</button>
       <button class="nav-tab" onclick="switchView('dashboard')">Dashboard</button>
       <button class="nav-tab" onclick="switchView('accessibility')">Accessibility</button>
     </div>
@@ -1333,6 +1334,38 @@
         <div class="dash-section-title">Run Comparison</div>
         <div id="diffContent"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- Sweep View -->
+  <div class="container" id="sweepView" style="display:none">
+    <div class="step-section">
+      <div class="step-header">
+        <h2>Sweep. <span>Queue a batch of stores. The worker paces itself to avoid Cloudflare.</span></h2>
+      </div>
+      <div style="background:#007aff18;border:1px solid #007aff44;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#64b5ff;line-height:1.5;">
+        <strong style="color:#007aff;">How it works:</strong> Paste one Shopify preview URL per line. The worker runs one store at a time with jittered spacing (default 2/hour ≈ 48/day) and keeps going even if the server restarts. Each finished store shows up in the Dashboard like a normal run.
+      </div>
+      <div class="field">
+        <label>Preview URLs (one per line)</label>
+        <textarea id="sweepUrls" style="width:100%;min-height:180px;background:#000;border:1px solid #333;border-radius:10px;color:#fff;padding:12px 14px;font-family:'SF Mono',Monaco,monospace;font-size:12px;line-height:1.6;resize:vertical;" placeholder="https://bkstr-0100.myshopify.com/?preview_theme_id=...&#10;https://bkstr-0101.myshopify.com/?preview_theme_id=...&#10;https://bkstr-0102.myshopify.com/?preview_theme_id=..."></textarea>
+      </div>
+      <div style="display:flex;gap:12px;align-items:flex-end;margin-top:16px;flex-wrap:wrap;">
+        <div class="field" style="flex:0 0 160px;">
+          <label>Stores per hour</label>
+          <input type="number" id="sweepRate" value="2" min="0.1" step="0.1" style="background:#000;border:1px solid #333;border-radius:8px;color:#fff;padding:10px 12px;font-family:'Inter',sans-serif;font-size:13px;width:100%;" />
+        </div>
+        <button class="btn-run" id="sweepBtn" onclick="startSweep()" style="margin-left:auto;">
+          <span class="run-label">Start Sweep</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="step-section">
+      <div class="step-header">
+        <h2>Queue. <span id="sweepQueueSubtitle">Active and completed sweeps.</span></h2>
+      </div>
+      <div id="sweepList"><div class="dash-empty" style="color:#86868b;padding:24px;text-align:center;">No sweeps yet.</div></div>
     </div>
   </div>
 
@@ -2328,9 +2361,171 @@
       document.getElementById('runnerView').style.display = view === 'runner' ? 'block' : 'none';
       document.getElementById('dashboardView').style.display = view === 'dashboard' ? 'block' : 'none';
       document.getElementById('accessibilityView').style.display = view === 'accessibility' ? 'block' : 'none';
+      document.getElementById('sweepView').style.display = view === 'sweep' ? 'block' : 'none';
       if (view === 'dashboard') loadRunHistory();
       if (view === 'accessibility' && !document.getElementById('adaStoreRows').children.length) addAdaStoreRow();
+      if (view === 'sweep') { loadSweeps(); startSweepPolling(); } else { stopSweepPolling(); }
     }
+
+    /* ── Sweep ── */
+    let sweepPollHandle = null;
+
+    function startSweepPolling() {
+      if (sweepPollHandle) return;
+      sweepPollHandle = setInterval(loadSweeps, 15000);
+    }
+    function stopSweepPolling() {
+      if (sweepPollHandle) { clearInterval(sweepPollHandle); sweepPollHandle = null; }
+    }
+
+    async function startSweep() {
+      const urls = document.getElementById('sweepUrls').value
+        .split('\n').map(l => l.trim()).filter(Boolean);
+      const rate = parseFloat(document.getElementById('sweepRate').value) || 2;
+
+      if (!urls.length) { alert('Paste at least one URL.'); return; }
+      if (!selectedTests.size) { alert('Select at least one test in the Run Tests tab first.'); return; }
+
+      const btn = document.getElementById('sweepBtn');
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/api/sweeps', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls, tests: [...selectedTests], storesPerHour: rate }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          alert(err.error || 'Failed to create sweep');
+        } else {
+          document.getElementById('sweepUrls').value = '';
+          await loadSweeps();
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function loadSweeps() {
+      try {
+        const resp = await fetch('/api/sweeps');
+        const sweeps = await resp.json();
+        // Fetch full detail for each so we can show per-item chips
+        const details = await Promise.all(
+          sweeps.map(s => fetch(`/api/sweeps/${s.id}`).then(r => r.json()).catch(() => null))
+        );
+        renderSweeps(details.filter(Boolean));
+      } catch (_) {}
+    }
+
+    function renderSweeps(sweeps) {
+      const el = document.getElementById('sweepList');
+      if (!sweeps.length) {
+        el.innerHTML = '<div class="dash-empty" style="color:#86868b;padding:24px;text-align:center;">No sweeps yet.</div>';
+        return;
+      }
+      el.innerHTML = sweeps.map(sweepCard).join('');
+    }
+
+    function sweepCard(s) {
+      const counts = { pending: 0, running: 0, complete: 0, 'cf-blocked': 0, error: 0 };
+      for (const i of s.items) counts[i.status] = (counts[i.status] || 0) + 1;
+      const done = counts.complete + counts['cf-blocked'] + counts.error;
+      const pct = s.items.length ? Math.round((done / s.items.length) * 100) : 0;
+      const remaining = counts.pending + counts.running;
+      const etaHours = s.pacing.storesPerHour > 0 ? (remaining / s.pacing.storesPerHour) : 0;
+      const etaText = remaining === 0 ? 'Done' : etaHours < 1 ? `~${Math.max(1, Math.round(etaHours * 60))} min left` : `~${etaHours.toFixed(1)} hr left`;
+
+      const statusColor = s.status === 'running' ? '#30d158' : s.status === 'paused' ? '#ff9f0a' : s.status === 'complete' ? '#86868b' : '#86868b';
+      const nextLabel = s.status === 'running' && remaining > 0 ? `Next: ${new Date(s.nextEligibleAt).toLocaleTimeString()}` : '';
+
+      const chips = s.items.map(it => {
+        const color = it.status === 'complete' ? '#30d158'
+          : it.status === 'running' ? '#007aff'
+          : it.status === 'cf-blocked' ? '#ff9f0a'
+          : it.status === 'error' ? '#ff453a'
+          : '#3a3a3c';
+        const hostname = (() => { try { return new URL(it.url).hostname; } catch { return it.url; } })();
+        const title = `${hostname} — ${it.status}${it.message ? ': ' + it.message : ''}`;
+        const click = it.runId ? `onclick="switchView('dashboard'); setTimeout(()=>loadRunDetail('${it.runId}'),100)"` : '';
+        return `<div class="sweep-chip" title="${escHtml(title)}" ${click} style="background:${color};color:#fff;${it.runId ? 'cursor:pointer;' : ''}">${escHtml(hostname)}</div>`;
+      }).join('');
+
+      const controls = s.status === 'complete' ? `<button class="btn-diff" onclick="downloadSweepReport('${s.id}')">Download Report</button><button class="btn-diff" onclick="deleteSweep('${s.id}')">Delete</button>`
+        : s.status === 'paused' ? `<button class="btn-diff" onclick="resumeSweep('${s.id}')">Resume</button><button class="btn-diff" onclick="deleteSweep('${s.id}')">Delete</button>`
+        : `<button class="btn-diff" onclick="pauseSweep('${s.id}')">Pause</button>`;
+
+      return `
+      <div class="sweep-card" style="background:#111;border:1px solid #222;border-radius:12px;padding:18px 20px;margin-bottom:14px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+          <div style="width:8px;height:8px;border-radius:50%;background:${statusColor};"></div>
+          <div style="font-weight:700;font-size:14px;">${s.items.length} stores &middot; ${s.pacing.storesPerHour}/hr</div>
+          <div style="font-size:11px;color:#86868b;">${new Date(s.createdAt).toLocaleString()}</div>
+          <div style="font-size:11px;color:#86868b;margin-left:auto;">${escHtml(nextLabel)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+          <div style="flex:1;height:6px;background:#222;border-radius:3px;overflow:hidden;">
+            <div style="height:100%;width:${pct}%;background:#30d158;"></div>
+          </div>
+          <div style="font-size:12px;font-weight:700;min-width:90px;text-align:right;">${pct}% &middot; ${etaText}</div>
+        </div>
+        <div style="display:flex;gap:14px;font-size:11px;color:#86868b;margin-bottom:12px;">
+          <span style="color:#30d158;">● ${counts.complete} done</span>
+          <span style="color:#007aff;">● ${counts.running} running</span>
+          <span style="color:#86868b;">● ${counts.pending} pending</span>
+          ${counts['cf-blocked'] ? `<span style="color:#ff9f0a;">● ${counts['cf-blocked']} CF-blocked</span>` : ''}
+          ${counts.error ? `<span style="color:#ff453a;">● ${counts.error} errors</span>` : ''}
+          <span style="margin-left:auto;">${controls}</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;">${chips}</div>
+      </div>`;
+    }
+
+    function escHtml(s) {
+      return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function downloadSweepReport(id) {
+      window.location.href = `/api/sweeps/${id}/pdf`;
+    }
+
+    async function pauseSweep(id) {
+      await fetch(`/api/sweeps/${id}/pause`, { method: 'POST' });
+      loadSweeps();
+    }
+    async function resumeSweep(id) {
+      await fetch(`/api/sweeps/${id}/resume`, { method: 'POST' });
+      loadSweeps();
+    }
+    async function deleteSweep(id) {
+      if (!confirm('Delete this sweep?')) return;
+      const resp = await fetch(`/api/sweeps/${id}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        alert(err.error || 'Failed to delete');
+      }
+      loadSweeps();
+    }
+
+    /* Chip hover style */
+    (function() {
+      const style = document.createElement('style');
+      style.textContent = `
+        .sweep-chip {
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 10px;
+          font-family: 'SF Mono', Monaco, monospace;
+          font-weight: 600;
+          max-width: 200px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .sweep-chip[onclick]:hover { opacity: 0.8; }
+      `;
+      document.head.appendChild(style);
+    })();
 
     /* ── Dashboard ── */
     let dashRuns = [];

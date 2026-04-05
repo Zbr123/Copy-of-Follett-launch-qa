@@ -1,0 +1,25 @@
+{
+  "id": "2026-04-05T18-18-30-886Z",
+  "startedAt": "2026-04-05T18:18:30.886Z",
+  "stores": [
+    "https://a.example.com"
+  ],
+  "tests": [
+    "storefront-login"
+  ],
+  "concurrency": 1,
+  "results": [
+    {
+      "store": "https://a.example.com",
+      "testId": "storefront-login",
+      "passed": true,
+      "message": "ok",
+      "checks": [],
+      "screenshots": [],
+      "timestamp": "2026-04-05T18:18:30.887Z"
+    }
+  ],
+  "status": "complete",
+  "sweepId": "sweep-recovery-test",
+  "completedAt": "2026-04-05T18:18:30.887Z"
+}

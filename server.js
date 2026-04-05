@@ -4,6 +4,7 @@ const fs = require('fs');
 const { runTests } = require('./test-runner');
 const { runAccessibilityScan } = require('./accessibility-scanner');
 const { chromium } = require('playwright');
+const sweepWorker = require('./sweep-worker');
 
 const app = express();
 const PORT = process.env.PORT || 3847;
@@ -678,7 +679,8 @@ app.post('/api/generate-pdf', async (req, res) => {
   }
 });
 
-function buildPdfHtml({ logoBase64, results, groups, totalTests, passedTests, failedTests, storeCount, dateStr, timeStr, screenshotCache }) {
+function buildPdfHtml({ logoBase64, results, groups, totalTests, passedTests, failedTests, storeCount, dateStr, timeStr, screenshotCache, cfBlockedStores, reportTitle }) {
+  const cfSet = cfBlockedStores instanceof Set ? cfBlockedStores : new Set(cfBlockedStores || []);
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const truncateUrl = s => {
     try { return new URL(s.startsWith('http') ? s : `https://${s}`).hostname; } catch (_) { return s.replace(/[?#].*$/, '').replace(/\/.*$/, ''); }
@@ -787,6 +789,8 @@ function buildPdfHtml({ logoBase64, results, groups, totalTests, passedTests, fa
   .dot.pass { background: #34c759; }
   .dot.fail { background: #ff3b30; }
   .dot.warn { background: #ff9f0a; }
+  .dot.cf   { background: #ff9f0a; }
+  .cf-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:8px; font-weight:800; letter-spacing:0.3px; background:#ff9f0a; color:#000; text-transform:uppercase; margin-left:8px; }
 
   /* ── Store Detail Sections ── */
   .store-section { margin-bottom: 28px; }
@@ -855,7 +859,7 @@ function buildPdfHtml({ logoBase64, results, groups, totalTests, passedTests, fa
   html += `
 <div class="cover">
   ${logoBase64 ? `<img class="cover-logo" src="${logoBase64}" />` : ''}
-  <div class="cover-title">Go Live Report</div>
+  <div class="cover-title">${reportTitle || 'Go Live Report'}</div>
   <div class="cover-subtitle">Follett Shopify Store Launch Validation</div>
   <div class="cover-stats">
     <div class="cover-stat"><div class="val white">${totalTests}</div><div class="lbl">Tests Run</div></div>
@@ -906,13 +910,15 @@ function buildPdfHtml({ logoBase64, results, groups, totalTests, passedTests, fa
   for (const [store, tests] of Object.entries(groups)) {
     const sp = tests.filter(t => t.passed).length;
     const sf = tests.filter(t => !t.passed).length;
-    const status = sf > 0 ? 'fail' : 'pass';
+    const isCf = cfSet.has(store);
+    const status = isCf ? 'cf' : (sf > 0 ? 'fail' : 'pass');
+    const statusLabel = isCf ? 'CF-blocked' : (sf > 0 ? 'Needs Attention' : 'All Passed');
     html += `
       <tr>
         <td class="store-name">${esc(truncateUrl(store))}</td>
         <td>${sp}</td>
         <td>${sf}</td>
-        <td><span class="dot ${status}"></span>${sf > 0 ? 'Needs Attention' : 'All Passed'}</td>
+        <td><span class="dot ${status}"></span>${statusLabel}</td>
       </tr>`;
   }
 
@@ -926,7 +932,8 @@ function buildPdfHtml({ logoBase64, results, groups, totalTests, passedTests, fa
   // ── Store Detail Pages ──
   for (const [store, tests] of Object.entries(groups)) {
     const sf = tests.filter(t => !t.passed).length;
-    const storeStatus = sf > 0 ? 'fail' : 'pass';
+    const isCf = cfSet.has(store);
+    const storeStatus = isCf ? 'cf' : (sf > 0 ? 'fail' : 'pass');
 
     html += `
 <div class="page">
@@ -942,6 +949,7 @@ function buildPdfHtml({ logoBase64, results, groups, totalTests, passedTests, fa
     <div class="store-title">
       <span class="dot ${storeStatus}"></span>
       ${esc(truncateUrl(store))}
+      ${isCf ? '<span class="cf-badge">CF-blocked</span>' : ''}
     </div>`;
 
     tests.forEach(t => {
@@ -1007,6 +1015,224 @@ function buildPdfHtml({ logoBase64, results, groups, totalTests, passedTests, fa
   return html;
 }
 
+// ── Sweep queue API ──
+//
+// A "sweep" is a self-pacing batch run: paste many preview URLs and
+// a background worker drains them one-at-a-time with jitter, so we
+// stay under Cloudflare's rate-limit radar. Each completed sweep
+// item produces a standard runs/{id}.json so it shows up in the
+// normal dashboard with zero extra work.
+
+app.post('/api/sweeps', (req, res) => {
+  const { urls, tests, storesPerHour, jitterPct } = req.body || {};
+  try {
+    const sweep = sweepWorker.createSweep({ urls, tests, storesPerHour, jitterPct });
+    res.json(sweep);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/sweeps', (req, res) => {
+  res.json(sweepWorker.listSweeps());
+});
+
+app.get('/api/sweeps/:id', (req, res) => {
+  const sweep = sweepWorker.getSweep(req.params.id);
+  if (!sweep) return res.status(404).json({ error: 'Sweep not found' });
+  res.json(sweep);
+});
+
+app.post('/api/sweeps/:id/pause', (req, res) => {
+  const sweep = sweepWorker.pauseSweep(req.params.id);
+  if (!sweep) return res.status(404).json({ error: 'Sweep not found' });
+  res.json(sweep);
+});
+
+app.post('/api/sweeps/:id/resume', (req, res) => {
+  const sweep = sweepWorker.resumeSweep(req.params.id);
+  if (!sweep) return res.status(404).json({ error: 'Sweep not found' });
+  res.json(sweep);
+});
+
+// Aggregate PDF for an entire sweep — only available when status === 'complete'.
+// Rolls up every item's individual runs/{runId}.json into a single report
+// via the existing buildPdfHtml helper.
+app.get('/api/sweeps/:id/pdf', async (req, res) => {
+  const sweep = sweepWorker.getSweep(req.params.id);
+  if (!sweep) return res.status(404).json({ error: 'Sweep not found' });
+  if (sweep.status !== 'complete') {
+    return res.status(409).json({ error: 'Sweep is not complete yet' });
+  }
+
+  // Gather results from every item's run file
+  const results = [];
+  const cfBlockedStores = new Set();
+  const screenshotCache = {};
+
+  for (const item of sweep.items) {
+    if (item.status === 'cf-blocked') cfBlockedStores.add(item.url);
+    if (!item.runId) continue;
+
+    const runFile = path.join(RUNS_DIR, `${item.runId}.json`);
+    if (!fs.existsSync(runFile)) continue;
+    let runData;
+    try {
+      runData = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+    } catch (_) { continue; }
+
+    for (const r of (runData.results || [])) {
+      results.push({
+        store: r.store,
+        testId: r.testId,
+        testName: r.testId,
+        passed: r.passed,
+        message: r.message,
+        checks: r.checks || [],
+        screenshots: r.screenshots || [],
+        steps: [],
+      });
+
+      // Inline screenshots as base64
+      for (const s of (r.screenshots || [])) {
+        if (s.src && !screenshotCache[s.src]) {
+          try {
+            const filePath = path.join(__dirname, s.src.replace(/^\//, ''));
+            if (fs.existsSync(filePath)) {
+              const buf = fs.readFileSync(filePath);
+              screenshotCache[s.src] = `data:image/png;base64,${buf.toString('base64')}`;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
+  // Ensure CF-blocked stores with no results still appear in the report
+  // (their items never wrote a runs file, or did so before being marked blocked).
+  for (const url of cfBlockedStores) {
+    if (!results.some(r => r.store === url)) {
+      results.push({
+        store: url,
+        testId: 'storefront-login',
+        testName: 'Storefront Login',
+        passed: false,
+        message: 'Cloudflare challenge could not be bypassed — store was not tested.',
+        checks: [],
+        screenshots: [],
+        steps: [],
+      });
+    }
+  }
+
+  const totalTests = results.length;
+  const passedTests = results.filter(r => r.passed).length;
+  const failedTests = totalTests - passedTests;
+
+  let logoBase64 = '';
+  try {
+    const logoBuf = fs.readFileSync(path.join(__dirname, 'public', 'p3-logo.png'));
+    logoBase64 = `data:image/png;base64,${logoBuf.toString('base64')}`;
+  } catch (_) {}
+
+  const started = new Date(sweep.createdAt);
+  const dateStr = started.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = started.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+  const groups = {};
+  results.forEach(r => { (groups[r.store] = groups[r.store] || []).push(r); });
+  const storeCount = Object.keys(groups).length;
+
+  const html = buildPdfHtml({
+    logoBase64, results, groups, totalTests, passedTests, failedTests,
+    storeCount, dateStr, timeStr, screenshotCache,
+    cfBlockedStores,
+    reportTitle: 'Sweep Report',
+  });
+
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle' });
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
+      printBackground: true,
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Follett-Sweep-Report-${sweep.id}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (browser) await browser.close();
+  }
+});
+
+app.delete('/api/sweeps/:id', (req, res) => {
+  const ok = sweepWorker.deleteSweep(req.params.id);
+  if (!ok) return res.status(400).json({ error: 'Cannot delete: sweep not found or an item is currently running' });
+  res.json({ ok: true });
+});
+
+// ── Disk cleanup ──
+//
+// Unattended sweeps produce a lot of screenshots and run JSON files.
+// Without pruning, daily sweeps fill the disk within weeks. This walks
+// runs/ and screenshots/ recursively on boot and every 24h, deleting
+// anything whose mtime is older than RETENTION_DAYS (default 30).
+//
+// Simple mtime-based policy — anything old is gone. Screenshots
+// referenced only by deleted run files become unreachable anyway, so
+// pruning them together is consistent.
+
+const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || '30', 10);
+const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function walkAndDeleteOld(dir, cutoffMs, stats) {
+  if (!fs.existsSync(dir)) return;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkAndDeleteOld(full, cutoffMs, stats);
+      // Remove the directory if it's now empty
+      try {
+        if (fs.readdirSync(full).length === 0) {
+          fs.rmdirSync(full);
+          stats.dirs++;
+        }
+      } catch (_) {}
+      continue;
+    }
+    try {
+      const st = fs.statSync(full);
+      if (st.mtimeMs < cutoffMs) {
+        fs.unlinkSync(full);
+        stats.files++;
+        stats.bytes += st.size;
+      }
+    } catch (_) {}
+  }
+}
+
+function runCleanup() {
+  const cutoffMs = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const stats = { files: 0, dirs: 0, bytes: 0 };
+  walkAndDeleteOld(RUNS_DIR, cutoffMs, stats);
+  walkAndDeleteOld(path.join(__dirname, 'screenshots'), cutoffMs, stats);
+  if (stats.files > 0 || stats.dirs > 0) {
+    const mb = (stats.bytes / 1024 / 1024).toFixed(1);
+    console.log(`[cleanup] Deleted ${stats.files} files (${mb} MB) and ${stats.dirs} empty dirs older than ${RETENTION_DAYS} days.`);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`QA Automation running at http://localhost:${PORT}`);
+  sweepWorker.start();
+  runCleanup();
+  setInterval(runCleanup, CLEANUP_INTERVAL_MS);
 });

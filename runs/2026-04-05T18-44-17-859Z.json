@@ -1,0 +1,25 @@
+{
+  "id": "2026-04-05T18-44-17-859Z",
+  "startedAt": "2026-04-05T18:44:17.859Z",
+  "stores": [
+    "https://flaky.example.com"
+  ],
+  "tests": [
+    "storefront-login"
+  ],
+  "concurrency": 1,
+  "results": [
+    {
+      "store": "https://flaky.example.com",
+      "testId": "storefront-login",
+      "passed": false,
+      "message": "blocked",
+      "checks": [],
+      "screenshots": [],
+      "timestamp": "2026-04-05T18:44:17.860Z"
+    }
+  ],
+  "status": "complete",
+  "sweepId": "sweep-2026-04-05T18-44-17-858Z",
+  "completedAt": "2026-04-05T18:44:17.860Z"
+}

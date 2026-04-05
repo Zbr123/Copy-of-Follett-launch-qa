@@ -1,0 +1,30 @@
+{
+  "id": "2026-04-05T18-16-21-940Z",
+  "startedAt": "2026-04-05T18:16:21.940Z",
+  "stores": [
+    "https://blocked.example.com"
+  ],
+  "tests": [
+    "storefront-login"
+  ],
+  "concurrency": 1,
+  "results": [
+    {
+      "store": "https://blocked.example.com",
+      "testId": "storefront-login",
+      "passed": false,
+      "message": "Error: page.goto: net::ERR_NAME_NOT_RESOLVED at https://blocked.example.com/\nCall log:\n  - navigating to \"https://blocked.example.com/\", waiting until \"domcontentloaded\"\n",
+      "checks": [],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___blocked_example_com_storefront-login_error.png",
+          "label": "Error state"
+        }
+      ],
+      "timestamp": "2026-04-05T18:16:22.551Z"
+    }
+  ],
+  "status": "complete",
+  "sweepId": "sweep-2026-04-05T18-16-21-940Z",
+  "completedAt": "2026-04-05T18:16:22.566Z"
+}

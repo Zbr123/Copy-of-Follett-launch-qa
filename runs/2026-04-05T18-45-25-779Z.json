@@ -1,0 +1,25 @@
+{
+  "id": "2026-04-05T18-45-25-779Z",
+  "startedAt": "2026-04-05T18:45:25.779Z",
+  "stores": [
+    "https://forever-blocked.example.com"
+  ],
+  "tests": [
+    "storefront-login"
+  ],
+  "concurrency": 1,
+  "results": [
+    {
+      "store": "https://forever-blocked.example.com",
+      "testId": "storefront-login",
+      "passed": false,
+      "message": "blocked",
+      "checks": [],
+      "screenshots": [],
+      "timestamp": "2026-04-05T18:45:25.779Z"
+    }
+  ],
+  "status": "complete",
+  "sweepId": "sweep-final-attempt",
+  "completedAt": "2026-04-05T18:45:25.779Z"
+}

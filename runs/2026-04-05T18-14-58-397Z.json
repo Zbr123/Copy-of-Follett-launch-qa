@@ -1,0 +1,30 @@
+{
+  "id": "2026-04-05T18-14-58-397Z",
+  "startedAt": "2026-04-05T18:14:58.397Z",
+  "stores": [
+    "https://example.com"
+  ],
+  "tests": [
+    "storefront-login"
+  ],
+  "concurrency": 1,
+  "results": [
+    {
+      "store": "https://example.com",
+      "testId": "storefront-login",
+      "passed": true,
+      "message": "Store loaded without password gate",
+      "checks": [],
+      "screenshots": [
+        {
+          "src": "/screenshots/https___example_com_storefront-login_01_initial.png",
+          "label": "Initial page load"
+        }
+      ],
+      "timestamp": "2026-04-05T18:15:00.352Z"
+    }
+  ],
+  "status": "complete",
+  "sweepId": "sweep-2026-04-05T18-14-58-396Z",
+  "completedAt": "2026-04-05T18:15:00.368Z"
+}

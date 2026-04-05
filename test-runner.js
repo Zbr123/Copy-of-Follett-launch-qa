@@ -3400,15 +3400,28 @@ async function testCourseMaterials(page, store, emit) {
 
 // ─── Run a single store (all its tests) ─────────────────────────────
 
-async function runStoreTests(browser, store, testIds, sendEvent) {
+async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {}) {
   sendEvent({ type: 'store-start', store: store.newStore });
 
-  const context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
-    deviceScaleFactor: 2,
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-  });
+  // Two modes:
+  //   - Ephemeral: given a Browser, create a fresh context per store
+  //     (the regular Run Tests path — preserves existing behavior).
+  //   - Shared persistent: given a BrowserContext directly, reuse it
+  //     across stores so cookies (including cf_clearance) persist.
+  //     Used by sweeps for Cloudflare resilience.
+  let context;
+  let ownsContext = false;
+  if (opts.sharedContext) {
+    context = browserOrCtx; // already a BrowserContext
+  } else {
+    context = await browserOrCtx.newContext({
+      viewport: { width: 1920, height: 1080 },
+      deviceScaleFactor: 2,
+      userAgent:
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+    });
+    ownsContext = true;
+  }
   const page = await context.newPage();
 
   // Patch page.goto to automatically handle Cloudflare challenges
@@ -3575,7 +3588,13 @@ async function runStoreTests(browser, store, testIds, sendEvent) {
     }
   }
 
-  await context.close();
+  if (ownsContext) {
+    await context.close();
+  } else {
+    // Shared persistent context: close the page but keep cookies alive
+    // for the next store. Closing the page releases memory.
+    try { await page.close(); } catch (_) {}
+  }
   sendEvent({ type: 'store-complete', store: store.newStore });
 }
 
@@ -3888,27 +3907,63 @@ const DEFAULT_CONCURRENCY = 3;
 
 async function runTests(stores, testIds, sendEvent, options = {}) {
   const concurrency = options.concurrency || DEFAULT_CONCURRENCY;
-  const browser = await chromium.launch({
-    headless: true,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--no-sandbox',
-      '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--disable-setuid-sandbox',
-      '--window-size=1920,1080',
-    ],
-  });
 
-  // Process stores in parallel with limited concurrency
+  // Browser launch strategy:
+  //   1. options.endpoint  → chromium.connect(endpoint)
+  //        Paid services (Browserless, Bright Data Scraping Browser) that
+  //        handle Cloudflare under the hood. No local browser.
+  //   2. options.persistent → chromium.launchPersistentContext(dataDir, ...)
+  //        A single shared BrowserContext reused across every store in the
+  //        batch. Cookies (including cf_clearance) persist across stores
+  //        AND across process restarts. Used by sweeps.
+  //   3. default → chromium.launch(...) + per-store ephemeral contexts
+  //        The original behavior. Preserved for the regular Run Tests path.
+
+  const headful = !!options.headful;
+  const launchArgs = [
+    '--disable-blink-features=AutomationControlled',
+    '--no-sandbox',
+    '--disable-web-security',
+    '--disable-features=IsolateOrigins,site-per-process',
+    '--disable-setuid-sandbox',
+    '--window-size=1920,1080',
+  ];
+
+  let browser = null;
+  let sharedContext = null;
+
+  if (options.endpoint) {
+    browser = await chromium.connect(options.endpoint);
+    sendEvent({ type: 'browser-info', message: `Connected to remote browser: ${options.endpoint.replace(/\?.*$/, '')}` });
+  } else if (options.persistent) {
+    const dataDir = options.userDataDir || path.join(__dirname, '.browser-data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    sharedContext = await chromium.launchPersistentContext(dataDir, {
+      headless: !headful,
+      viewport: { width: 1920, height: 1080 },
+      deviceScaleFactor: 2,
+      userAgent:
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+      args: launchArgs,
+    });
+    sendEvent({ type: 'browser-info', message: `Persistent ${headful ? 'headful' : 'headless'} context @ ${dataDir}` });
+  } else {
+    browser = await chromium.launch({ headless: !headful, args: launchArgs });
+  }
+
+  // Process stores in parallel with limited concurrency.
+  // Shared persistent mode forces concurrency = 1 because one context
+  // cannot serve multiple stores simultaneously without races.
+  const effectiveConcurrency = sharedContext ? 1 : concurrency;
   const queue = [...stores];
   const running = new Set();
 
   await new Promise((resolve) => {
     function startNext() {
-      while (running.size < concurrency && queue.length > 0) {
+      while (running.size < effectiveConcurrency && queue.length > 0) {
         const store = queue.shift();
-        const promise = runStoreTests(browser, store, testIds, sendEvent)
+        const target = sharedContext || browser;
+        const promise = runStoreTests(target, store, testIds, sendEvent, { sharedContext: !!sharedContext })
           .catch(err => {
             sendEvent({ type: 'error', message: `Store ${store.newStore} failed: ${err.message}` });
           })
@@ -3927,7 +3982,12 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     startNext();
   });
 
-  await browser.close();
+  if (sharedContext) {
+    try { await sharedContext.close(); } catch (_) {}
+  }
+  if (browser) {
+    try { await browser.close(); } catch (_) {}
+  }
 }
 
 module.exports = { runTests, TEST_REGISTRY };
