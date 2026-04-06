@@ -3070,25 +3070,83 @@ async function testCourseMaterials(page, store, emit) {
     });
   });
 
-  // Step 3: Select Term (first non-default option)
-  // Wait for dropdowns to fully load
+  // Step 3: Select Campus (if present) then Term
+  // Some stores have Campus + Term layout, others have Term only.
   emit({ step: 'Waiting for dropdowns to load...' });
   await page.waitForTimeout(3000);
 
-  emit({ step: 'Selecting Term...' });
-
-  const termSelected = await page.evaluate(() => {
+  // Check for Campus dropdown (variant 1: Campus + Term)
+  const hasCampus = await page.evaluate(() => {
     const selects = document.querySelectorAll('select');
-    const termSelect = Array.from(selects).find(s => s.id === 'term' && s.options.length > 1 && !s.className.includes('mobile'));
-    if (!termSelect || termSelect.options.length < 2) return null;
-    const opt = termSelect.options[1];
-    termSelect.value = opt.value;
-    termSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    return opt.text;
+    return Array.from(selects).some(s =>
+      (s.id === 'campus' || s.id === 'division' || (s.name || '').toLowerCase().includes('campus') || (s.name || '').toLowerCase().includes('division'))
+      && !s.className.includes('mobile')
+    );
   });
 
+  if (hasCampus) {
+    emit({ step: 'Campus dropdown detected — selecting campus first...' });
+    const campusSelected = await page.evaluate(() => {
+      const selects = document.querySelectorAll('select');
+      const campusSelect = Array.from(selects).find(s =>
+        (s.id === 'campus' || s.id === 'division' || (s.name || '').toLowerCase().includes('campus') || (s.name || '').toLowerCase().includes('division'))
+        && !s.className.includes('mobile')
+      );
+      if (!campusSelect) return null;
+      // Pick first non-placeholder option
+      const opts = Array.from(campusSelect.options).filter(o =>
+        o.value !== '' && o.value.toLowerCase() !== 'campus' && o.value.toLowerCase() !== 'division'
+        && o.text.toLowerCase() !== 'campus' && o.text.toLowerCase() !== 'division'
+      );
+      if (opts.length === 0) return null;
+      campusSelect.value = opts[0].value;
+      campusSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      return opts[0].text;
+    });
+
+    if (campusSelected) {
+      emit({ step: `Selected campus: ${campusSelected}` });
+      // Wait for Term dropdown to populate after campus selection
+      await page.waitForTimeout(3000);
+    } else {
+      emit({ step: 'Campus dropdown found but no selectable options' });
+    }
+  } else {
+    emit({ step: 'No Campus dropdown — Term-only layout' });
+  }
+
+  emit({ step: 'Selecting Term...' });
+
+  // Wait for term options to load (may take extra time after campus selection)
+  let termSelected = null;
+  for (let termWait = 0; termWait < 3 && !termSelected; termWait++) {
+    termSelected = await page.evaluate(() => {
+      const selects = document.querySelectorAll('select');
+      const termSelect = Array.from(selects).find(s =>
+        (s.id === 'term' || (s.name || '').toLowerCase().includes('term'))
+        && s.options.length > 1 && !s.className.includes('mobile')
+      );
+      if (!termSelect || termSelect.options.length < 2) return null;
+      // Pick first non-placeholder option
+      const opts = Array.from(termSelect.options).filter(o =>
+        o.value !== '' && o.value.toLowerCase() !== 'term' && o.text.toLowerCase() !== 'term'
+      );
+      if (opts.length === 0) return null;
+      termSelect.value = opts[0].value;
+      termSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      return opts[0].text;
+    });
+    if (!termSelected) {
+      emit({ step: `Term options not yet loaded, waiting... (attempt ${termWait + 1}/3)` });
+      await page.waitForTimeout(2000);
+    }
+  }
+
   if (!termSelected) {
-    return { passed: false, message: 'Could not select a Term — no options available' };
+    const shot = screenshotPath(store.newStore, 'course-materials', '02b_no_term');
+    await page.screenshot({ path: shot, fullPage: false });
+    emit({ screenshot: screenshotUrl(shot), label: 'No Term options available' });
+    return { passed: false, message: `Could not select a Term — no options available${hasCampus ? ' (Campus+Term layout)' : ' (Term-only layout)'}` };
   }
 
   emit({ step: `Selected term: ${termSelected}` });
@@ -3109,17 +3167,29 @@ async function testCourseMaterials(page, store, emit) {
     // Wait for departments to be available
     await page.waitForTimeout(2000);
 
-    // Get available departments
+    // Get available departments (some stores use #department, others may
+    // have a "Division" select that gates the department list)
     const departments = await page.evaluate(() => {
-      const dept = document.querySelector('select#department');
+      // Try #department first, fall back to any select whose id/name contains 'department' or 'dept'
+      let dept = document.querySelector('select#department');
+      if (!dept) {
+        const selects = Array.from(document.querySelectorAll('select'));
+        dept = selects.find(s =>
+          (s.id || '').toLowerCase().includes('department') ||
+          (s.name || '').toLowerCase().includes('department') ||
+          (s.id || '').toLowerCase().includes('dept')
+        );
+      }
       if (!dept) return [];
       return Array.from(dept.options)
-        .filter(o => o.value !== '' && o.value !== 'Department')
+        .filter(o => o.value !== '' && o.value.toLowerCase() !== 'department'
+          && o.text.toLowerCase() !== 'department'
+          && o.value.toLowerCase() !== 'n/a' && o.text.trim().toLowerCase() !== 'n/a')
         .map(o => ({ text: o.text, value: o.value }));
     });
 
     if (departments.length === 0) {
-      emit({ step: `[Attempt ${attempt + 1}] No departments available` });
+      emit({ step: `[Attempt ${attempt + 1}] No departments available (or only N/A)` });
       continue;
     }
 
