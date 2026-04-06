@@ -151,6 +151,41 @@ const TEST_REGISTRY = {
     description: 'Spot check for out-of-stock products across 5 categories (10 checks) + validate 10 navigation links',
     run: testInventory,
   },
+  'empty-collections': {
+    name: 'Empty Collections Scan',
+    description: 'Discover nav collections and flag any with zero products (P1 bug pattern)',
+    run: testEmptyCollections,
+  },
+  'hero-destination': {
+    name: 'Hero Destination Valid',
+    description: 'Click each hero/slider slide and verify destination has products',
+    run: testHeroDestination,
+  },
+  'sale-clearance-purity': {
+    name: 'Sale & Clearance Purity',
+    description: 'Verify sale/clearance collections actually contain sale items with badges',
+    run: testSaleClearancePurity,
+  },
+  'footer-text-sanity': {
+    name: 'Footer & Store Hours Text',
+    description: 'Scan footer and store hours for literal \\n, &amp;, formatting issues',
+    run: testFooterTextSanity,
+  },
+  'external-link-targets': {
+    name: 'External Link Targets',
+    description: 'Verify external links (Specialty Shops etc.) open in new tab and are reachable',
+    run: testExternalLinkTargets,
+  },
+  'menu-duplicates': {
+    name: 'Menu Duplicate Detection',
+    description: 'Flag duplicate L1 nav categories and hover/flyout glitches',
+    run: testMenuDuplicates,
+  },
+  'price-floor-scan': {
+    name: 'Price Floor Scan',
+    description: 'Flag products listed under $1.00 (likely misconfigured OOS variants)',
+    run: testPriceFloorScan,
+  },
 };
 
 function screenshotPath(storeName, testId, suffix) {
@@ -3397,6 +3432,616 @@ async function testCourseMaterials(page, store, emit) {
     passed: true,
     message: `Course Materials flow works. Added ${coursesAdded} courses, found textbooks in ${textbooksFound}, added ${cartAdds} to cart.`,
   };
+}
+
+// ─── CSV-driven bug-pattern tests ───────────────────────────────────
+// These tests are derived from the Follett QA team's most frequently
+// reported bug patterns (April 2026 CSV) and designed to run across
+// any Shopify preview store without per-store configuration.
+
+// Helper: extract all collection hrefs from the Shop By / main nav
+async function discoverNavCollections(page, origin) {
+  return page.$$eval('nav a[href*="/collections/"], [class*="menu"] a[href*="/collections/"], header a[href*="/collections/"]', (links, orig) => {
+    const seen = new Set();
+    const results = [];
+    for (const a of links) {
+      const href = a.getAttribute('href');
+      if (!href) continue;
+      // Normalise to pathname
+      let pathname;
+      try { pathname = new URL(href, orig).pathname; } catch { continue; }
+      if (seen.has(pathname)) continue;
+      seen.add(pathname);
+      const label = (a.textContent || '').trim().substring(0, 60);
+      results.push({ pathname, label });
+    }
+    return results;
+  }, origin);
+}
+
+// ── 1. Empty Collections Scan ───────────────────────────────────────
+// Discovers collection links from the nav and flags any that return
+// zero products.  Catches CSV rows: #6, 8, 29, 30, 32, 39, 40
+async function testEmptyCollections(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  emit({ step: 'Discovering collection links from navigation...' });
+
+  // Make sure we're on the homepage first
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(1500);
+
+  const collections = await discoverNavCollections(page, origin);
+  emit({ step: `Found ${collections.length} unique collection links in nav` });
+
+  if (collections.length === 0) {
+    return { passed: true, message: 'No collection links found in nav — nothing to scan' };
+  }
+
+  // Cap at 40 to keep runtime reasonable
+  const toCheck = collections.slice(0, 40);
+  const emptyOnes = [];
+  let checked = 0;
+
+  for (const col of toCheck) {
+    checked++;
+    const url = `${origin}${col.pathname}`;
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(1000);
+
+      // Count product cards
+      const productCount = await page.$$eval(
+        '[class*="product"], .product-card, .grid__item, [data-product-id], a[href*="/products/"]',
+        els => {
+          const seen = new Set();
+          return els.filter(el => {
+            const href = el.getAttribute('href') || el.dataset.productId || el.className;
+            if (seen.has(href)) return false;
+            seen.add(href);
+            return true;
+          }).length;
+        }
+      );
+
+      // Also check for "No products found" text
+      const bodyText = await page.textContent('body').catch(() => '');
+      const hasNoProducts = /no products found/i.test(bodyText);
+
+      if (productCount === 0 || hasNoProducts) {
+        emptyOnes.push({ label: col.label, pathname: col.pathname });
+        emit({ step: `❌ EMPTY: "${col.label}" → ${col.pathname}` });
+
+        // Screenshot first 3 empty ones
+        if (emptyOnes.length <= 3) {
+          const shot = screenshotPath(store.newStore, 'empty-collections', `empty_${emptyOnes.length}`);
+          await page.screenshot({ path: shot, fullPage: false });
+          emit({ screenshot: screenshotUrl(shot), label: `Empty: ${col.label}` });
+        }
+      }
+    } catch (err) {
+      emit({ step: `⚠ Error loading ${col.pathname}: ${err.message}` });
+    }
+  }
+
+  if (emptyOnes.length > 0) {
+    const list = emptyOnes.map(e => `"${e.label}" (${e.pathname})`).join(', ');
+    return {
+      passed: false,
+      message: `${emptyOnes.length} of ${checked} collections are empty: ${list}`,
+    };
+  }
+
+  return { passed: true, message: `All ${checked} nav collections have products` };
+}
+
+// ── 2. Hero Destination Valid ────────────────────────────────────────
+// Clicks each homepage hero/slider slide and verifies the destination
+// page has products or is not a 404 / empty.  Catches CSV: #24, 34, 45, 49, 60
+async function testHeroDestination(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  emit({ step: 'Checking homepage hero slides...' });
+
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(2000);
+
+  // Collect hero/banner/slider links
+  const heroLinks = await page.$$eval(
+    [
+      '.slideshow a[href]', '.hero a[href]', '.banner a[href]',
+      '[class*="slider"] a[href]', '[class*="slide"] a[href]',
+      '[class*="hero"] a[href]', '[class*="banner"] a[href]',
+      '.swiper-slide a[href]', '[data-slide] a[href]',
+      'section:first-of-type a[href*="/collections/"]',
+    ].join(', '),
+    (links, orig) => {
+      const seen = new Set();
+      return links.map(a => {
+        const href = a.getAttribute('href');
+        if (!href || href === '#' || href === '/') return null;
+        try {
+          const full = new URL(href, orig).href;
+          if (seen.has(full)) return null;
+          seen.add(full);
+          return { href: full, text: (a.textContent || '').trim().substring(0, 50) };
+        } catch { return null; }
+      }).filter(Boolean);
+    },
+    origin
+  );
+
+  emit({ step: `Found ${heroLinks.length} hero/banner links` });
+
+  if (heroLinks.length === 0) {
+    const shot = screenshotPath(store.newStore, 'hero-destination', '01_no_heroes');
+    await page.screenshot({ path: shot, fullPage: false });
+    emit({ screenshot: screenshotUrl(shot), label: 'Homepage — no hero links found' });
+    return { passed: true, message: 'No hero/banner links detected on homepage' };
+  }
+
+  const broken = [];
+  for (let i = 0; i < Math.min(heroLinks.length, 6); i++) {
+    const link = heroLinks[i];
+    try {
+      emit({ step: `Checking hero link ${i + 1}: ${link.href}` });
+      const resp = await page.goto(link.href, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(1000);
+
+      const status = resp ? resp.status() : 0;
+      const bodyText = await page.textContent('body').catch(() => '');
+      const hasNoProducts = /no products found/i.test(bodyText);
+      const is404 = status === 404 || /page not found|404/i.test(bodyText);
+      const productCount = await page.$$eval('a[href*="/products/"]', els => els.length);
+
+      if (is404 || (hasNoProducts && productCount === 0)) {
+        broken.push({ href: link.href, reason: is404 ? '404/Page Not Found' : 'No products found' });
+        emit({ step: `❌ Hero destination broken: ${link.href} — ${is404 ? '404' : 'empty'}` });
+
+        if (broken.length <= 3) {
+          const shot = screenshotPath(store.newStore, 'hero-destination', `broken_${broken.length}`);
+          await page.screenshot({ path: shot, fullPage: false });
+          emit({ screenshot: screenshotUrl(shot), label: `Broken hero: ${link.text || link.href}` });
+        }
+      }
+
+      // Go back to homepage for next hero
+      await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await page.waitForTimeout(500);
+    } catch (err) {
+      broken.push({ href: link.href, reason: err.message });
+      emit({ step: `⚠ Error checking hero link: ${err.message}` });
+      await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+    }
+  }
+
+  if (broken.length > 0) {
+    const list = broken.map(b => `${b.href} (${b.reason})`).join('; ');
+    return { passed: false, message: `${broken.length} hero link(s) broken: ${list}` };
+  }
+
+  return { passed: true, message: `All ${Math.min(heroLinks.length, 6)} hero destinations have content` };
+}
+
+// ── 3. Sale & Clearance Purity ──────────────────────────────────────
+// Visits Sale & Clearance collections and checks that items actually
+// show sale indicators.  Catches CSV: #10, 13, 42, 54, 56
+async function testSaleClearancePurity(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  emit({ step: 'Looking for Sale & Clearance collections...' });
+
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(1500);
+
+  // Find sale/clearance collection links from nav
+  const saleLinks = await page.$$eval(
+    'a[href*="/collections/"]',
+    (links, orig) => {
+      const results = [];
+      const seen = new Set();
+      for (const a of links) {
+        const text = (a.textContent || '').trim().toLowerCase();
+        const href = a.getAttribute('href') || '';
+        if (!text.includes('sale') && !text.includes('clearance') && !href.includes('sale') && !href.includes('clearance')) continue;
+        let pathname;
+        try { pathname = new URL(href, orig).pathname; } catch { continue; }
+        if (seen.has(pathname)) continue;
+        seen.add(pathname);
+        results.push({ pathname, label: (a.textContent || '').trim().substring(0, 60) });
+      }
+      return results;
+    },
+    origin
+  );
+
+  if (saleLinks.length === 0) {
+    return { passed: true, message: 'No Sale & Clearance collections found in nav' };
+  }
+
+  emit({ step: `Found ${saleLinks.length} sale/clearance collection(s)` });
+
+  const issues = [];
+  const toCheck = saleLinks.slice(0, 8);
+
+  for (const col of toCheck) {
+    const url = `${origin}${col.pathname}`;
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(1500);
+
+      // Check if price filters are pre-applied (bug #54)
+      const preCheckedFilters = await page.$$eval(
+        'input[type="checkbox"][checked], input[type="checkbox"]:checked',
+        els => els.map(e => {
+          const label = e.closest('label')?.textContent?.trim() || e.name || e.value || 'unknown';
+          return label;
+        }).filter(l => /\$|price/i.test(l))
+      );
+
+      if (preCheckedFilters.length > 0) {
+        issues.push({ label: col.label, problem: `Pre-checked price filter: ${preCheckedFilters.join(', ')}` });
+        emit({ step: `⚠ "${col.label}": has pre-checked price filters: ${preCheckedFilters.join(', ')}` });
+      }
+
+      // Count product cards and check how many have sale indicators
+      const saleStats = await page.$$eval(
+        '[class*="product"], .product-card, .grid__item',
+        cards => {
+          let total = 0;
+          let withSale = 0;
+          for (const card of cards) {
+            const text = card.textContent || '';
+            const html = card.innerHTML || '';
+            // Look for sale badge, compare-at price, strikethrough
+            const hasSaleIndicator =
+              /sale|clearance/i.test(html) ||
+              card.querySelector('[class*="sale"], [class*="badge"], [class*="compare"], s, del, strike, [class*="was-price"], [class*="original-price"]') !== null ||
+              (html.match(/<s\b|<del\b|<strike\b|class="[^"]*compare/i) !== null);
+            total++;
+            if (hasSaleIndicator) withSale++;
+          }
+          return { total, withSale };
+        }
+      );
+
+      if (saleStats.total > 0 && saleStats.withSale === 0) {
+        issues.push({ label: col.label, problem: `${saleStats.total} products, none have sale badges/strikethrough` });
+        emit({ step: `❌ "${col.label}": ${saleStats.total} products but 0 have sale indicators` });
+
+        if (issues.length <= 3) {
+          const shot = screenshotPath(store.newStore, 'sale-clearance', `nosale_${issues.length}`);
+          await page.screenshot({ path: shot, fullPage: false });
+          emit({ screenshot: screenshotUrl(shot), label: `No sale indicators: ${col.label}` });
+        }
+      } else if (saleStats.total > 0) {
+        const pct = Math.round((saleStats.withSale / saleStats.total) * 100);
+        emit({ step: `✓ "${col.label}": ${saleStats.withSale}/${saleStats.total} (${pct}%) have sale indicators` });
+      }
+    } catch (err) {
+      emit({ step: `⚠ Error checking "${col.label}": ${err.message}` });
+    }
+  }
+
+  if (issues.length > 0) {
+    const list = issues.map(i => `"${i.label}": ${i.problem}`).join('; ');
+    return { passed: false, message: `${issues.length} sale/clearance issue(s): ${list}` };
+  }
+
+  return { passed: true, message: `All ${toCheck.length} sale/clearance collections look correct` };
+}
+
+// ── 4. Footer & Store Hours Text Sanity ────────────────────────────
+// Scans footer and /pages/view-store-hours for literal "\n", "&amp;",
+// address formatting issues.  Catches CSV: #1, 43, 62
+async function testFooterTextSanity(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  const issues = [];
+
+  emit({ step: 'Checking footer and store hours for text issues...' });
+
+  // Check homepage footer
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(1500);
+
+  const footerIssues = await page.$$eval('footer, [class*="footer"]', els => {
+    const problems = [];
+    for (const el of els) {
+      const text = el.textContent || '';
+      const html = el.innerHTML || '';
+      // Literal \n in rendered text (not actual newlines — the literal backslash-n)
+      if (text.includes('\\n') || text.includes('/n')) {
+        problems.push('Literal "\\n" or "/n" found in footer text');
+      }
+      // HTML entity rendered as text
+      if (text.includes('&amp;')) {
+        problems.push('"&amp;" rendered as literal text in footer');
+      }
+    }
+    return [...new Set(problems)];
+  });
+
+  if (footerIssues.length > 0) {
+    issues.push(...footerIssues.map(p => ({ page: 'Homepage footer', problem: p })));
+    footerIssues.forEach(p => emit({ step: `❌ Footer: ${p}` }));
+    const shot = screenshotPath(store.newStore, 'footer-text', '01_footer');
+    await page.screenshot({ path: shot, fullPage: true });
+    emit({ screenshot: screenshotUrl(shot), label: 'Footer issues' });
+  }
+
+  // Check store hours page
+  try {
+    await page.goto(`${origin}/pages/view-store-hours`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(1000);
+
+    const bodyText = await page.textContent('body').catch(() => '');
+    const storeHoursIssues = [];
+
+    if (bodyText.includes('\\n') || bodyText.includes('/n')) {
+      storeHoursIssues.push('Literal "\\n" or "/n" in store hours page');
+    }
+    if (bodyText.includes('&amp;')) {
+      storeHoursIssues.push('"&amp;" rendered as literal text');
+    }
+
+    // Check for addresses without spaces (e.g., "123MainSt" — no space)
+    const addressBlock = await page.$('[class*="address"], [class*="location"], [class*="store-info"]');
+    if (addressBlock) {
+      const addrText = await addressBlock.textContent();
+      // Look for "Get Directions" link with concatenated address
+      if (/\d{5}[A-Z]/.test(addrText) || /[a-z]\d{5}/.test(addrText)) {
+        storeHoursIssues.push('Address may have missing spaces (zip code touching letters)');
+      }
+    }
+
+    if (storeHoursIssues.length > 0) {
+      issues.push(...storeHoursIssues.map(p => ({ page: 'Store Hours', problem: p })));
+      storeHoursIssues.forEach(p => emit({ step: `❌ Store Hours: ${p}` }));
+      const shot = screenshotPath(store.newStore, 'footer-text', '02_store_hours');
+      await page.screenshot({ path: shot, fullPage: false });
+      emit({ screenshot: screenshotUrl(shot), label: 'Store Hours text issues' });
+    }
+  } catch (err) {
+    emit({ step: `⚠ Could not load store hours page: ${err.message}` });
+  }
+
+  if (issues.length > 0) {
+    const list = issues.map(i => `${i.page}: ${i.problem}`).join('; ');
+    return { passed: false, message: `${issues.length} text formatting issue(s): ${list}` };
+  }
+
+  return { passed: true, message: 'Footer and store hours text looks clean' };
+}
+
+// ── 5. External Link Targets ────────────────────────────────────────
+// Enumerates Specialty Shops and other external links, verifies they
+// open in a new tab and aren't dead.  Catches CSV: #26, 28, 35
+async function testExternalLinkTargets(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  const storeDomain = new URL(origin).hostname;
+
+  emit({ step: 'Scanning for external links in navigation...' });
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(1500);
+
+  // Find all links that go to external domains
+  const externalLinks = await page.$$eval('nav a, header a, [class*="menu"] a', (links, domain) => {
+    const results = [];
+    const seen = new Set();
+    for (const a of links) {
+      const href = a.getAttribute('href') || '';
+      if (!href.startsWith('http')) continue;
+      try {
+        const url = new URL(href);
+        if (url.hostname === domain || url.hostname.endsWith('.myshopify.com')) continue;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        results.push({
+          href,
+          target: a.getAttribute('target') || '',
+          label: (a.textContent || '').trim().substring(0, 50),
+        });
+      } catch {}
+    }
+    return results;
+  }, storeDomain);
+
+  if (externalLinks.length === 0) {
+    return { passed: true, message: 'No external links found in navigation' };
+  }
+
+  emit({ step: `Found ${externalLinks.length} external link(s)` });
+
+  const issues = [];
+
+  for (const link of externalLinks) {
+    // Check target="_blank"
+    if (link.target !== '_blank') {
+      issues.push({ href: link.href, label: link.label, problem: 'Opens in same tab (missing target="_blank")' });
+      emit({ step: `❌ "${link.label}" (${link.href}) — opens in same tab` });
+    }
+
+    // Quick HEAD request to check if link is dead
+    try {
+      const resp = await page.request.head(link.href, { timeout: 10000 }).catch(() =>
+        page.request.get(link.href, { timeout: 10000 })
+      );
+      if (resp && (resp.status() >= 400)) {
+        issues.push({ href: link.href, label: link.label, problem: `Dead link (HTTP ${resp.status()})` });
+        emit({ step: `❌ "${link.label}" (${link.href}) — HTTP ${resp.status()}` });
+      }
+    } catch (err) {
+      issues.push({ href: link.href, label: link.label, problem: `Unreachable: ${err.message}` });
+      emit({ step: `❌ "${link.label}" (${link.href}) — unreachable` });
+    }
+  }
+
+  if (issues.length > 0) {
+    if (issues.length <= 3) {
+      const shot = screenshotPath(store.newStore, 'external-links', '01_nav');
+      await page.screenshot({ path: shot, fullPage: false });
+      emit({ screenshot: screenshotUrl(shot), label: 'External links in nav' });
+    }
+    const list = issues.map(i => `"${i.label}" ${i.href}: ${i.problem}`).join('; ');
+    return { passed: false, message: `${issues.length} external link issue(s): ${list}` };
+  }
+
+  return { passed: true, message: `All ${externalLinks.length} external links open in new tab and are reachable` };
+}
+
+// ── 6. Menu Duplicate Detection ─────────────────────────────────────
+// Counts L1 category labels in the main nav and flags duplicates.
+// Catches CSV: #25, 27
+async function testMenuDuplicates(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+
+  emit({ step: 'Scanning main nav for duplicate L1 categories...' });
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(1500);
+
+  // Get top-level nav items (L1 = direct children of main nav)
+  const navLabels = await page.$$eval(
+    [
+      'nav > ul > li > a',
+      'nav > div > ul > li > a',
+      '[class*="main-nav"] > ul > li > a',
+      '[class*="primary-nav"] > ul > li > a',
+      'header nav ul > li > a',
+      '[class*="menu"] > ul > li > a',
+      '[class*="header__menu"] > li > a',
+    ].join(', '),
+    links => links.map(a => (a.textContent || '').trim()).filter(t => t.length > 0)
+  );
+
+  emit({ step: `Found ${navLabels.length} L1 nav labels` });
+
+  if (navLabels.length === 0) {
+    return { passed: true, message: 'Could not detect L1 nav items — skipped' };
+  }
+
+  // Count occurrences
+  const counts = {};
+  for (const label of navLabels) {
+    const normalised = label.toLowerCase();
+    counts[normalised] = (counts[normalised] || 0) + 1;
+  }
+
+  const duplicates = Object.entries(counts)
+    .filter(([, count]) => count > 1)
+    .map(([label, count]) => `"${label}" (×${count})`);
+
+  if (duplicates.length > 0) {
+    emit({ step: `❌ Duplicate L1 categories: ${duplicates.join(', ')}` });
+    const shot = screenshotPath(store.newStore, 'menu-duplicates', '01_nav');
+    await page.screenshot({ path: shot, fullPage: false });
+    emit({ screenshot: screenshotUrl(shot), label: 'Duplicate nav items' });
+    return { passed: false, message: `Duplicate L1 nav categories: ${duplicates.join(', ')}` };
+  }
+
+  // Also check for hover/flyout glitch — hover each L1 and verify its L2s are stable
+  // (CSV #27: hovering one category shows another's subcategories)
+  // We do a lightweight version: hover each L1, capture L2 text, check for unexpected overlap
+  const l1Items = await page.$$('nav > ul > li, header nav ul > li, [class*="menu"] > ul > li');
+  const l1L2Map = {};
+  let hoverGlitch = false;
+
+  for (let i = 0; i < Math.min(l1Items.length, 10); i++) {
+    try {
+      await l1Items[i].hover({ timeout: 3000 });
+      await page.waitForTimeout(400);
+      const l2s = await l1Items[i].$$eval('ul a, [class*="submenu"] a, [class*="dropdown"] a',
+        links => links.map(a => (a.textContent || '').trim()).filter(t => t.length > 0)
+      );
+      const l1Label = await l1Items[i].$eval('a', a => (a.textContent || '').trim()).catch(() => `item-${i}`);
+      l1L2Map[l1Label] = l2s;
+    } catch {}
+  }
+
+  // Check if any two L1s share identical L2 sets (sign of the hover bug)
+  const l1Entries = Object.entries(l1L2Map).filter(([, l2s]) => l2s.length > 0);
+  for (let i = 0; i < l1Entries.length; i++) {
+    for (let j = i + 1; j < l1Entries.length; j++) {
+      const [labelA, l2sA] = l1Entries[i];
+      const [labelB, l2sB] = l1Entries[j];
+      if (l2sA.length > 2 && JSON.stringify(l2sA) === JSON.stringify(l2sB)) {
+        hoverGlitch = true;
+        emit({ step: `❌ Hover glitch: "${labelA}" and "${labelB}" show identical submenus` });
+      }
+    }
+  }
+
+  if (hoverGlitch) {
+    const shot = screenshotPath(store.newStore, 'menu-duplicates', '02_hover_glitch');
+    await page.screenshot({ path: shot, fullPage: false });
+    emit({ screenshot: screenshotUrl(shot), label: 'Menu hover glitch' });
+    return { passed: false, message: 'Menu hover glitch detected — different L1 categories show identical submenus' };
+  }
+
+  return { passed: true, message: `${navLabels.length} L1 categories — no duplicates or hover glitches` };
+}
+
+// ── 7. Price Floor Scan ─────────────────────────────────────────────
+// Sorts collection by price ascending and flags any product under $1
+// (almost always a misconfigured OOS variant).  Catches CSV: #46
+async function testPriceFloorScan(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+
+  emit({ step: 'Checking for suspiciously low-priced products...' });
+
+  // Try New Arrivals first, fall back to /collections/all
+  let collectionUrl = `${origin}/collections/new-arrivals?sort_by=price-ascending`;
+  await page.goto(collectionUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(1500);
+
+  let bodyText = await page.textContent('body').catch(() => '');
+  if (/no products found|page not found|404/i.test(bodyText)) {
+    collectionUrl = `${origin}/collections/all?sort_by=price-ascending`;
+    await page.goto(collectionUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(1500);
+  }
+
+  // Extract prices from visible product cards
+  const suspectProducts = await page.$$eval(
+    '[class*="product"], .product-card, .grid__item',
+    cards => {
+      const suspects = [];
+      for (const card of cards) {
+        const priceEls = card.querySelectorAll('[class*="price"], .money, [data-price]');
+        const link = card.querySelector('a[href*="/products/"]');
+        const title = (card.querySelector('[class*="title"], h2, h3, h4') || {}).textContent || '';
+
+        for (const priceEl of priceEls) {
+          const text = (priceEl.textContent || '').trim();
+          // Extract numeric price
+          const match = text.match(/\$\s*(\d+(?:\.\d{1,2})?)/);
+          if (match) {
+            const price = parseFloat(match[1]);
+            if (price > 0 && price < 1.00) {
+              suspects.push({
+                title: title.trim().substring(0, 60),
+                price: `$${match[1]}`,
+                href: link ? link.getAttribute('href') : '',
+              });
+              break; // one per card
+            }
+          }
+        }
+        if (suspects.length >= 5) break;
+      }
+      return suspects;
+    }
+  );
+
+  if (suspectProducts.length > 0) {
+    for (const p of suspectProducts) {
+      emit({ step: `❌ ${p.price} — "${p.title}" ${p.href}` });
+    }
+    const shot = screenshotPath(store.newStore, 'price-floor', '01_low_prices');
+    await page.screenshot({ path: shot, fullPage: false });
+    emit({ screenshot: screenshotUrl(shot), label: 'Suspiciously low prices' });
+
+    const list = suspectProducts.map(p => `${p.price} "${p.title}"`).join('; ');
+    return { passed: false, message: `${suspectProducts.length} product(s) under $1.00: ${list}` };
+  }
+
+  return { passed: true, message: 'No products found under $1.00' };
 }
 
 // ─── Run a single store (all its tests) ─────────────────────────────
