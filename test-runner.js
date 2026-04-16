@@ -113,7 +113,7 @@ const TEST_REGISTRY = {
   },
   'rental-collateral': {
     name: 'Rental Collateral',
-    description: 'Search "print rental", select Rent New/Used, add to bag, verify bag count',
+    description: 'Search "rent new", select Rent New/Used, add to bag, verify bag count',
     run: testRentalCollateral,
   },
   'digital-delivery-fee': {
@@ -532,7 +532,7 @@ async function testRentalCollateral(page, store, emit) {
   await page.waitForTimeout(500);
 
   // Step 1: Navigate directly to search results (more reliable than UI interaction)
-  const searchUrl = `${origin}/search?q=${encodeURIComponent('print rental')}`;
+  const searchUrl = `${origin}/search?q=${encodeURIComponent('rent new')}`;
   emit({ step: `Navigating to search: ${searchUrl}` });
   await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);
