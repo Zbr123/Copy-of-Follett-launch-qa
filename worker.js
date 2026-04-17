@@ -24,7 +24,48 @@ const {
   REDIS_URL,
   publishEvent,
   incrementRunCounter,
+  isRunFinished,
 } = require('./lib/queue');
+
+// ─── Run file finalization ────────────────────────────────────────────
+// Background note on why the worker finalizes the run file (and not just
+// server.js): completion marking used to live inside the SSE handler in
+// server.js. If the browser closed, the API process restarted, or the
+// container got recycled mid-run, the status file was orphaned at
+// "running" forever — even though the worker had actually finished the
+// work. Having the worker write the final status removes that dependency
+// on a live HTTP request.
+//
+// Runs dir matches server.js: $DATA_DIR/runs. When deployed on Railway
+// both processes mount the same volume, so the worker sees the run file
+// server.js created at submission time.
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const RUNS_DIR = path.join(DATA_DIR, 'runs');
+
+async function finalizeRunIfDone(runId) {
+  try {
+    if (!(await isRunFinished(runId))) return;
+  } catch (err) {
+    console.warn('[worker] isRunFinished check failed:', err.message);
+    return;
+  }
+  const runFile = path.join(RUNS_DIR, `${runId}.json`);
+  if (!fs.existsSync(runFile)) return; // ada-scan runs don't have a file
+  try {
+    const runData = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+    // Only flip 'running' → 'complete'. Never overwrite 'error' or an
+    // existing 'complete' (could happen if another worker raced us).
+    if (runData.status !== 'running') return;
+    runData.status = 'complete';
+    runData.completedAt = new Date().toISOString();
+    fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
+    // Let any connected SSE clients know the run wrapped up.
+    try { await publishEvent(runId, { type: 'complete' }); } catch (_) {}
+    console.log(`[worker] run finalized — run=${runId}`);
+  } catch (err) {
+    console.warn('[worker] finalize run failed:', err.message);
+  }
+}
 
 const { runStoreTests } = require('./test-runner');
 const { scanStore } = require('./accessibility-scanner');
