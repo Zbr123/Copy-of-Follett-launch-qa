@@ -96,9 +96,22 @@ const storeTestWorker = new Worker(
 
     try {
       const browser = await getStoreTestBrowser();
-      await runStoreTests(browser, store, testIds, sendEvent);
-      // Drain the event chain so all screenshot uploads + publishes
-      // finish before we mark the job complete.
+      // Hard per-store ceiling. If a store can't finish in 10 minutes
+      // (usually because of Cloudflare lock-outs), we abort and let the
+      // rest of the queue keep moving. Without this cap a single bad
+      // store can monopolize a worker slot indefinitely.
+      const STORE_TIMEOUT_MS = 10 * 60 * 1000;
+      await Promise.race([
+        runStoreTests(browser, store, testIds, sendEvent),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`store timeout after ${STORE_TIMEOUT_MS / 1000}s`)),
+            STORE_TIMEOUT_MS
+          )
+        ),
+      ]);
+      // Drain the event chain so screenshots + publishes finish before
+      // we mark the job complete.
       await eventChain;
       await incrementRunCounter(runId, 'completed');
       return { ok: true };

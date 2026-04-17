@@ -4227,9 +4227,16 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
       response = await originalGoto(url, options);
     }
 
-    // Final check — if still stuck, log it but don't crash
+    // Final check — if still stuck, throw. Letting the test proceed
+    // against a CF challenge page just wastes another ~5 min on
+    // selector waits that will never succeed. Throwing here fails the
+    // current test fast; the outer retry logic in runStoreTests will
+    // attempt it once more, and if that also fails, login is marked
+    // failed and every remaining test for this store is skipped.
     if (await isCloudflareChallenge(page)) {
-      sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: `Cloudflare challenge could not be resolved after ${MAX_CF_RETRIES} attempts — proceeding anyway.` });
+      const err = new Error(`Cloudflare challenge could not be resolved after ${MAX_CF_RETRIES} attempts`);
+      err.cloudflareBlocked = true;
+      throw err;
     }
 
     return response;
@@ -4237,6 +4244,11 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
 
   let loginDone = false;
 
+  // Wrap the whole test loop in try/finally so the browser context is
+  // always released — even if a test throws uncaught. Without this,
+  // contexts leaked on every CF failure and RAM crept toward the
+  // Railway container limit, eventually triggering SIGTERM.
+  try {
   for (const testId of testIds) {
     const test = TEST_REGISTRY[testId];
     if (!test) continue;
@@ -4352,12 +4364,14 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     }
   }
 
-  if (ownsContext) {
-    await context.close();
-  } else {
-    // Shared persistent context: close the page but keep cookies alive
-    // for the next store. Closing the page releases memory.
-    try { await page.close(); } catch (_) {}
+  } finally {
+    if (ownsContext) {
+      try { await context.close(); } catch (_) {}
+    } else {
+      // Shared persistent context: close the page but keep cookies alive
+      // for the next store. Closing the page releases memory.
+      try { await page.close(); } catch (_) {}
+    }
   }
   sendEvent({ type: 'store-complete', store: store.newStore });
 }
