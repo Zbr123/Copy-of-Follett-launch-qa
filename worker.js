@@ -61,18 +61,32 @@ if (UPLOAD_DISABLED) {
 // false on failure (never throws). Best-effort — a missing screenshot
 // does not fail the test.
 async function uploadScreenshot(screenshotUrl) {
-  if (UPLOAD_DISABLED) return false;
+  if (UPLOAD_DISABLED) {
+    console.warn(`[worker] upload skipped (disabled): ${screenshotUrl}`);
+    return false;
+  }
   if (!screenshotUrl || typeof screenshotUrl !== 'string') return false;
-  if (!screenshotUrl.startsWith('/screenshots/')) return false;
+  if (!screenshotUrl.startsWith('/screenshots/')) {
+    console.warn(`[worker] upload skipped (unexpected URL): ${screenshotUrl}`);
+    return false;
+  }
 
   const relPath = screenshotUrl.substring('/screenshots/'.length);
-  if (!relPath || relPath.includes('..')) return false;
+  if (!relPath || relPath.includes('..')) {
+    console.warn(`[worker] upload skipped (bad relPath): ${relPath}`);
+    return false;
+  }
 
   const localPath = path.join(WORKER_SCREENSHOTS_DIR, relPath);
-  if (!fs.existsSync(localPath)) return false;
+  if (!fs.existsSync(localPath)) {
+    console.warn(`[worker] upload skipped — file not found on disk: ${localPath} (url=${screenshotUrl})`);
+    return false;
+  }
 
+  const size = fs.statSync(localPath).size;
   const data = fs.readFileSync(localPath);
   const uploadUrl = `${API_URL}/api/internal/screenshots/${relPath.split('/').map(encodeURIComponent).join('/')}`;
+  console.log(`[worker] upload start — ${size} bytes → ${uploadUrl}`);
 
   // One retry on transient failure. Keep timeout tight — screenshots
   // are small and the internal network is fast.
@@ -91,12 +105,14 @@ async function uploadScreenshot(screenshotUrl) {
       });
       clearTimeout(timer);
       if (resp.ok) {
+        console.log(`[worker] upload ok — ${uploadUrl}`);
         // Free the ephemeral copy — keeps worker RAM/disk from bloating
         // over long-running sessions.
         try { fs.unlinkSync(localPath); } catch (_) {}
         return true;
       }
-      console.warn(`[worker] screenshot upload ${uploadUrl} returned HTTP ${resp.status}`);
+      const body = await resp.text().catch(() => '');
+      console.warn(`[worker] screenshot upload ${uploadUrl} returned HTTP ${resp.status}: ${body.slice(0, 200)}`);
     } catch (err) {
       console.warn(`[worker] screenshot upload ${uploadUrl} failed (attempt ${attempt + 1}): ${err.message}`);
     }
