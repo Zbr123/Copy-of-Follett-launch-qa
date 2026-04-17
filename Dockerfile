@@ -19,7 +19,8 @@ WORKDIR /app
 # and re-enable the `xvfb-run` branch in the CMD below.
 
 COPY package.json package-lock.json* ./
-RUN npm ci --production
+# --omit=dev replaces the deprecated --production flag (npm >= 9).
+RUN npm ci --omit=dev
 
 COPY . .
 
