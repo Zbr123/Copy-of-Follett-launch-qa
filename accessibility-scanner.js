@@ -16,8 +16,31 @@ function screenshotPath(store, page, suffix) {
   return path.join(dir, `${page}_${suffix}_${unique}.png`);
 }
 
+// Memory-only screenshot capture (see test-runner.js for rationale).
+// Buffers are stashed by wrapPageForCapture and read back here as
+// base64 data URLs so the filesystem is never involved.
+const adaScreenshotBuffers = new Map();
+
 function screenshotUrl(filePath) {
+  const buf = adaScreenshotBuffers.get(filePath);
+  if (buf) {
+    adaScreenshotBuffers.delete(filePath);
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  }
+  // Fallback preserves the original URL shape if an unwrapped page
+  // ever slips through — avoids crashes at the cost of a broken image.
   return '/' + path.relative(path.join(__dirname), filePath).replace(/\\/g, '/');
+}
+
+function wrapPageForCapture(page) {
+  const orig = page.screenshot.bind(page);
+  page.screenshot = async (options = {}) => {
+    const { path: storagePath, ...rest } = options || {};
+    const buffer = await orig(rest);
+    if (storagePath) adaScreenshotBuffers.set(storagePath, buffer);
+    return buffer;
+  };
+  return page;
 }
 
 function storeOrigin(url) {
@@ -101,7 +124,7 @@ async function scanStore(browser, store, sendEvent) {
     deviceScaleFactor: 2,
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   });
-  const page = await context.newPage();
+  const page = wrapPageForCapture(await context.newPage());
 
   // Login if needed
   try {

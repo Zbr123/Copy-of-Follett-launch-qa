@@ -188,19 +188,61 @@ const TEST_REGISTRY = {
   },
 };
 
+// ─── Screenshot capture: memory-only, no filesystem ──────────────────
+// Every call site still uses the existing pattern:
+//   const shot = screenshotPath(...);
+//   await page.screenshot({ path: shot, fullPage: false });
+//   emit({ screenshot: screenshotUrl(shot), ... });
+//
+// ...but under the hood we no longer touch disk. wrapPageForCapture()
+// monkey-patches `page.screenshot` so it captures the buffer in a
+// Map keyed by the pseudo-path. screenshotUrl() then returns the
+// buffer as a base64 data URL. The browser renders data URLs natively
+// so the frontend needs no changes.
+//
+// This eliminates two classes of bugs at once:
+//   1. Parallel runs on the same store overwriting each other's files.
+//   2. Async timing gaps between Playwright writing the file and the
+//      worker's encoder reading it.
+
+const screenshotBuffers = new Map(); // pseudo-path → Buffer
+
 function screenshotPath(storeName, testId, suffix) {
   const safe = storeName.replace(/[^a-z0-9]/gi, '_');
-  // Append a process-PID + timestamp + random suffix so parallel runs
-  // on the same store (WORKER_CONCURRENCY > 1) never write to the same
-  // file. Without this, two concurrent runs overwrite each other's
-  // screenshots and the worker's inline encoder sees "file missing"
-  // for whichever run deletes it second.
   const unique = `${process.pid}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  // Returns a synthetic path string used purely as the Map key — it's
+  // never actually written to disk.
   return path.join(SCREENSHOTS_DIR, `${safe}_${testId}_${suffix}_${unique}.png`);
 }
 
 function screenshotUrl(filePath) {
+  const buf = screenshotBuffers.get(filePath);
+  if (buf) {
+    // One-time read: drop from cache so RAM doesn't grow unbounded.
+    screenshotBuffers.delete(filePath);
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  }
+  // Fallback — shouldn't happen if page was wrapped, but keeps URLs
+  // syntactically valid if someone forgets to wrap a page.
   return '/screenshots/' + path.basename(filePath);
+}
+
+// Wrap a Playwright Page so page.screenshot({ path, ... }) captures
+// the buffer in-memory instead of writing to disk. Call this right
+// after `await context.newPage()`.
+function wrapPageForCapture(page) {
+  const orig = page.screenshot.bind(page);
+  page.screenshot = async (options = {}) => {
+    const { path: storagePath, ...rest } = options || {};
+    // Strip the `path` option so Playwright returns the buffer without
+    // writing anything to disk.
+    const buffer = await orig(rest);
+    if (storagePath) {
+      screenshotBuffers.set(storagePath, buffer);
+    }
+    return buffer;
+  };
+  return page;
 }
 
 // ─── Test implementations ───────────────────────────────────────────
@@ -4144,7 +4186,7 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     });
     ownsContext = true;
   }
-  const page = await context.newPage();
+  const page = wrapPageForCapture(await context.newPage());
 
   // Patch page.goto to automatically handle Cloudflare challenges
   const originalGoto = page.goto.bind(page);

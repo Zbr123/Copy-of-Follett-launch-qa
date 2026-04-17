@@ -33,92 +33,11 @@ chromiumExtra.use(StealthPlugin());
 
 const WORKER_CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 3);
 
-// ─── Inline screenshot encoding ─────────────────────────────────────
-// Workers used to upload screenshots to the API over HTTP. That path
-// had too many moving parts (shared secret, disk sync, async timing)
-// and was silently dropping files in production. We now base64-encode
-// each screenshot synchronously in the sendEvent callback and embed
-// the data URL directly in the SSE event. The browser renders data
-// URLs identically to file URLs, so the frontend needs no changes.
-//
-// Encoding happens SYNCHRONOUSLY at the moment the test emits its
-// screenshot — which is right after `await page.screenshot({ path })`
-// resolves. This closes the timing gap that was making the file
-// disappear before the old async upload chain could read it.
-
-const WORKER_SCREENSHOTS_DIR = path.join(__dirname, 'screenshots');
-if (!fs.existsSync(WORKER_SCREENSHOTS_DIR)) {
-  fs.mkdirSync(WORKER_SCREENSHOTS_DIR, { recursive: true });
-}
-
-console.log('[worker] screenshots: inline base64 mode (no upload)');
-
-// Size cap on the image we're willing to embed. Anything over this is
-// dropped with a warning — 5 MB of base64 (~3.7 MB raw) is generous
-// for a typical Playwright viewport shot.
-const MAX_INLINE_BYTES = 5 * 1024 * 1024;
-
-// Read one file and return a data URL, or null if the file is missing
-// or oversized. Never throws.
-function fileToDataUrl(localPath) {
-  try {
-    if (!fs.existsSync(localPath)) {
-      console.warn(`[worker] inline skipped — file missing: ${localPath}`);
-      return null;
-    }
-    const size = fs.statSync(localPath).size;
-    if (size > MAX_INLINE_BYTES) {
-      console.warn(`[worker] inline skipped — file too large (${size} bytes): ${localPath}`);
-      return null;
-    }
-    const data = fs.readFileSync(localPath);
-    const ext = path.extname(localPath).toLowerCase();
-    const mime =
-      ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
-      ext === '.webp' ? 'image/webp' :
-      ext === '.gif' ? 'image/gif' :
-      'image/png';
-    // Free the ephemeral copy immediately — the bytes now live in the
-    // event and will flow through Redis to the browser. Keeping the
-    // file wastes disk on long-running workers.
-    try { fs.unlinkSync(localPath); } catch (_) {}
-    return `data:${mime};base64,${data.toString('base64')}`;
-  } catch (err) {
-    console.warn(`[worker] inline failed for ${localPath}: ${err.message}`);
-    return null;
-  }
-}
-
-// If a value looks like a /screenshots/... URL produced by test-runner
-// or accessibility-scanner, resolve it to a disk path and replace with
-// a data URL. Mutates the parent object in place.
-function maybeInlineScreenshotField(obj, key) {
-  const v = obj[key];
-  if (typeof v !== 'string') return;
-  if (!v.startsWith('/screenshots/')) return;
-  const relPath = v.substring('/screenshots/'.length);
-  if (!relPath || relPath.includes('..')) return;
-  const localPath = path.join(WORKER_SCREENSHOTS_DIR, relPath);
-  const dataUrl = fileToDataUrl(localPath);
-  if (dataUrl) obj[key] = dataUrl;
-}
-
-// Walk an event object and inline every `screenshot` field we find,
-// including nested ones inside accessibility violations + nodes.
-function inlineScreenshotsDeep(obj) {
-  if (!obj || typeof obj !== 'object') return;
-  if (Array.isArray(obj)) {
-    for (const item of obj) inlineScreenshotsDeep(item);
-    return;
-  }
-  for (const key of Object.keys(obj)) {
-    if (key === 'screenshot') {
-      maybeInlineScreenshotField(obj, key);
-    } else if (obj[key] && typeof obj[key] === 'object') {
-      inlineScreenshotsDeep(obj[key]);
-    }
-  }
-}
+// Screenshots are captured & base64-encoded inside test-runner.js
+// via a monkey-patched page.screenshot — events arrive here already
+// containing `data:image/png;base64,...` URLs. The worker no longer
+// reads or writes any image files.
+console.log('[worker] screenshots: in-memory data URLs (no disk)');
 
 // Launch a single browser per worker process — reused across all jobs
 // this worker handles. Each job creates its own BrowserContext inside
@@ -166,9 +85,6 @@ const storeTestWorker = new Worker(
     // racing an async chain that might run long after the file is gone.
     let eventChain = Promise.resolve();
     const sendEvent = (event) => {
-      try { inlineScreenshotsDeep(event); } catch (err) {
-        console.warn('[worker] inline encode failed:', err.message);
-      }
       eventChain = eventChain.then(async () => {
         try {
           await publishEvent(runId, event);
@@ -221,9 +137,6 @@ const adaScanWorker = new Worker(
     // the nested screenshots inside accessibility violations & nodes.
     let eventChain = Promise.resolve();
     const sendEvent = (event) => {
-      try { inlineScreenshotsDeep(event); } catch (err) {
-        console.warn('[worker] inline encode failed:', err.message);
-      }
       eventChain = eventChain.then(async () => {
         try {
           await publishEvent(runId, event);
