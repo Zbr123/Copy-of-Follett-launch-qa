@@ -11,6 +11,7 @@ const {
   subscribeToRun,
   initRunStatus,
   getRunStatus,
+  isRunFinished,
 } = require('./lib/queue');
 
 // BullMQ reserves `:` in custom job IDs for its internal Redis key
@@ -103,12 +104,33 @@ app.post('/api/run-tests', async (req, res) => {
 
   // Writes to the run JSON are debounced — on a big run we might see
   // hundreds of events per second and we don't want to thrash the disk.
+  //
+  // Status-field race: the worker process is now responsible for flipping
+  // status → 'complete' (so the dashboard still updates when the browser
+  // or server.js has disconnected). If the worker wins the race and marks
+  // complete before the polling loop below, a late debounced write from
+  // this function would otherwise clobber that. Read the current status
+  // off disk and preserve it if the worker already finalized.
   let pendingWrite = null;
   const scheduleWrite = () => {
     if (pendingWrite) return;
     pendingWrite = setTimeout(() => {
       pendingWrite = null;
-      try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
+      try {
+        let preservedStatus = null;
+        let preservedCompletedAt = null;
+        try {
+          const existing = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+          if (existing.status === 'complete' || existing.status === 'error') {
+            preservedStatus = existing.status;
+            preservedCompletedAt = existing.completedAt;
+          }
+        } catch (_) {}
+        const toWrite = preservedStatus
+          ? { ...runData, status: preservedStatus, completedAt: preservedCompletedAt }
+          : runData;
+        fs.writeFileSync(runFile, JSON.stringify(toWrite, null, 2));
+      } catch (_) {}
     }, 250);
   };
 
@@ -141,12 +163,15 @@ app.post('/api/run-tests', async (req, res) => {
 
   // Disconnect detection — if the browser closes its SSE connection the
   // run keeps executing on the workers (that's the whole point of
-  // decoupling via the queue). We only tear down our subscription here.
+  // decoupling via the queue).
+  //
+  // We intentionally do NOT unsubscribe from Redis on browser close.
+  // Events arriving after the browser leaves still need to be persisted
+  // to disk (runData.results), otherwise re-opening the run in the
+  // dashboard shows a half-finished picture. The subscription is torn
+  // down in the `finally` block when the run actually completes.
   let unsubscribe = null;
   let finished = false;
-  req.on('close', () => {
-    if (unsubscribe) { unsubscribe().catch(() => {}); unsubscribe = null; }
-  });
 
   try {
     await initRunStatus(runId, stores.length);
@@ -1515,9 +1540,39 @@ function runCleanup() {
   }
 }
 
+// Runs whose `status` is still 'running' on disk but whose Redis counter
+// already says done are orphans — left over from a previous process that
+// crashed or got redeployed before its polling loop could finalize them.
+// Sweep them on boot so the dashboard shows COMPLETE for runs that did
+// in fact finish. (Redis TTLs the counter after RUN_TTL_SECONDS, so runs
+// older than that just stay as-is — nothing we can recover.)
+async function reconcileOrphanedRuns() {
+  let files = [];
+  try { files = fs.readdirSync(RUNS_DIR); } catch (_) { return; }
+  let fixed = 0;
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    const runFile = path.join(RUNS_DIR, f);
+    let runData;
+    try { runData = JSON.parse(fs.readFileSync(runFile, 'utf8')); } catch (_) { continue; }
+    if (runData.status !== 'running') continue;
+    let done = false;
+    try { done = await isRunFinished(runData.id); } catch (_) {}
+    if (!done) continue;
+    runData.status = 'complete';
+    runData.completedAt = runData.completedAt || new Date().toISOString();
+    try {
+      fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
+      fixed++;
+    } catch (_) {}
+  }
+  if (fixed > 0) console.log(`[server] reconciled ${fixed} orphaned run(s) on boot`);
+}
+
 app.listen(PORT, () => {
   console.log(`QA Automation running at http://localhost:${PORT}`);
   sweepWorker.start();
   runCleanup();
   setInterval(runCleanup, CLEANUP_INTERVAL_MS);
+  reconcileOrphanedRuns().catch((e) => console.warn('[server] reconcile failed:', e.message));
 });

@@ -155,12 +155,14 @@ const storeTestWorker = new Worker(
       // we mark the job complete.
       await eventChain;
       await incrementRunCounter(runId, 'completed');
+      await finalizeRunIfDone(runId);
       return { ok: true };
     } catch (err) {
       console.error(`[worker] store-test failed for ${store.newStore}:`, err);
       sendEvent({ type: 'error', store: store.newStore, message: err.message });
       try { await eventChain; } catch (_) {}
       await incrementRunCounter(runId, 'failed');
+      await finalizeRunIfDone(runId);
       throw err; // let BullMQ mark the job as failed
     }
   },
@@ -205,12 +207,14 @@ const adaScanWorker = new Worker(
       await scanStore(browser, store, sendEvent);
       await eventChain;
       await incrementRunCounter(runId, 'completed');
+      await finalizeRunIfDone(runId);
       return { ok: true };
     } catch (err) {
       console.error(`[worker] ada-scan failed for ${store.newStore}:`, err);
       sendEvent({ type: 'ada-error', store: store.newStore, message: err.message });
       try { await eventChain; } catch (_) {}
       await incrementRunCounter(runId, 'failed');
+      await finalizeRunIfDone(runId);
       throw err;
     }
   },
