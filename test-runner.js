@@ -4706,4 +4706,4 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
   }
 }
 
-module.exports = { runTests, TEST_REGISTRY };
+module.exports = { runTests, runStoreTests, TEST_REGISTRY };

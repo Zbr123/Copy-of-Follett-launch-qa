@@ -1,0 +1,85 @@
+# docker-compose for the queue-based architecture.
+#
+# Services:
+#   redis   — broker for BullMQ + pub/sub for SSE event fan-out
+#   api     — Express server (enqueues jobs, streams results to browsers)
+#   worker  — Playwright worker (pulls jobs, runs tests). Scaled to 8
+#             replicas by default so 5 concurrent users can each kick
+#             off a big run without stepping on each other.
+#
+# ── Capacity sizing ───────────────────────────────────────────────────
+#   Parallel stores = worker replicas × WORKER_CONCURRENCY
+#   Default: 8 × 5 = 40 parallel stores
+#
+#   Example workloads:
+#     1 user × 200 stores   at 3 min/store ≈ 15 min wall-clock
+#     5 users × 40 stores   at 3 min/store ≈ 15 min wall-clock
+#     5 users × 200 stores  at 3 min/store ≈ 75 min wall-clock
+#
+#   Each worker at concurrency=5 uses ~1.5 GB RAM + 1-2 CPU cores.
+#   8 workers ≈ 12 GB RAM + 8-16 CPU cores. Scale `deploy.replicas`
+#   or `--scale worker=N` based on host capacity.
+#
+# ── Running ───────────────────────────────────────────────────────────
+#   docker compose up --build              (default: 8 workers)
+#   docker compose up -d --scale worker=16 (override scale)
+#   → visit http://localhost:3847
+#   → monitor: curl http://localhost:3847/api/queue/stats
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      ROLE: api
+      PORT: "3847"
+      REDIS_URL: redis://redis:6379
+      DATA_DIR: /app/data
+    ports:
+      - "3847:3847"
+    volumes:
+      - app-data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    restart: unless-stopped
+    environment:
+      ROLE: worker
+      REDIS_URL: redis://redis:6379
+      DATA_DIR: /app/data
+      # Each worker handles this many jobs in parallel. Each Playwright
+      # context ≈ 300 MB RAM, so 5 concurrency ≈ 1.5 GB per worker.
+      WORKER_CONCURRENCY: "5"
+    volumes:
+      # Workers share the /app/data volume with the API so screenshots
+      # they capture are visible via the /screenshots static route.
+      - app-data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      # 8 workers × 5 concurrency = 40 parallel stores — enough for
+      # 5 concurrent users submitting big runs without anyone feeling
+      # locked out. Override at runtime with `--scale worker=N`.
+      replicas: 8
+
+volumes:
+  redis-data:
+  app-data:

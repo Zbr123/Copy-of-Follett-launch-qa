@@ -402,6 +402,31 @@
       color: #86868b;
       line-height: 1.5;
     }
+    .queue-banner {
+      display: none;
+      background: #1d1d1f;
+      border-left: 3px solid #0a84ff;
+      border-radius: 0 12px 12px 0;
+      padding: 12px 18px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: #c7c7cc;
+      line-height: 1.5;
+    }
+    .queue-banner.show { display: block; }
+    .queue-banner .qb-title { color: #fff; font-weight: 600; margin-right: 6px; }
+    .queue-banner .qb-pill {
+      display: inline-block;
+      background: #0a84ff;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-right: 8px;
+      letter-spacing: 0.3px;
+    }
+    .queue-banner .qb-dim { color: #86868b; }
     .reminder-bar.show { display: block; }
     .reminder-bar strong { color: #ffd60a; }
 
@@ -1258,6 +1283,8 @@
         <h2>Results. <span id="resultsSubtitle">Tests are running...</span></h2>
       </div>
 
+      <div class="queue-banner" id="queueBanner"></div>
+
       <div class="progress-section" id="progressSection">
         <div class="progress-bar-track">
           <div class="progress-bar-fill" id="progressFill"></div>
@@ -1619,6 +1646,12 @@
       // Scroll to results
       document.getElementById('resultsWrapper').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
+      // Hide the queue banner from any previous run — it'll reappear on
+      // the first `run-start` event if the server reports others ahead.
+      const qb = document.getElementById('queueBanner');
+      qb.classList.remove('show');
+      qb.innerHTML = '';
+
       const tests = Array.from(selectedTests);
       try {
         const response = await fetch('/api/run-tests', {
@@ -1639,6 +1672,29 @@
             if (!line.startsWith('data: ')) continue;
             const data = JSON.parse(line.slice(6));
             switch (data.type) {
+              case 'run-start': {
+                // Show queue status so users know if they're waiting behind
+                // other runs. The server sends queue={ othersWaiting, inFlight, workers }.
+                const q = data.queue || {};
+                const workers = q.workers || 0;
+                const ahead = q.othersWaiting || 0;
+                const inFlight = q.inFlight || 0;
+                const banner = document.getElementById('queueBanner');
+                if (workers === 0) {
+                  banner.innerHTML = `<span class="qb-pill">Warning</span><span class="qb-title">No workers online</span><span class="qb-dim">Jobs will queue until a worker comes up.</span>`;
+                  banner.classList.add('show');
+                } else if (ahead > 0) {
+                  banner.innerHTML = `<span class="qb-pill">Queued</span><span class="qb-title">${ahead} store${ahead === 1 ? '' : 's'} ahead of you</span><span class="qb-dim">${inFlight} running · ${workers} worker${workers === 1 ? '' : 's'} online — your tests will start as capacity frees up.</span>`;
+                  banner.classList.add('show');
+                } else {
+                  banner.innerHTML = `<span class="qb-pill">Ready</span><span class="qb-title">Starting now</span><span class="qb-dim">${workers} worker${workers === 1 ? '' : 's'} online · ${inFlight} other store${inFlight === 1 ? '' : 's'} in flight.</span>`;
+                  banner.classList.add('show');
+                  // Auto-dismiss the "ready" variant after 6s so it doesn't
+                  // clutter the results view.
+                  setTimeout(() => banner.classList.remove('show'), 6000);
+                }
+                break;
+              }
               case 'store-start': getOrCreateResultCard(data.store); break;
               case 'test-start': getOrCreateTestRow(data.store, data.testId, data.testName); break;
               case 'test-progress': {

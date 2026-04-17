@@ -21,8 +21,21 @@ ENV DATA_DIR=/app/data
 
 EXPOSE ${PORT:-3847}
 
-# Conditionally wrap node in xvfb-run only when headful mode is requested.
-# Headful chromium has a smaller CF fingerprint but needs a virtual
-# display; in headless mode (the default) xvfb is unnecessary and has
-# caused container boot failures on some hosts.
-CMD ["sh", "-c", "if [ \"$SWEEP_BROWSER_HEADFUL\" = \"1\" ]; then exec xvfb-run -a --server-args='-screen 0 1920x1080x24' node server.js; else exec node server.js; fi"]
+# Same image runs either the Express API or a queue worker — $ROLE
+# selects between them. Defaults to `api` so existing deployments
+# (Railway) keep working unchanged.
+#
+# ROLE=api     → node server.js  (Express, SSE, enqueues jobs)
+# ROLE=worker  → node worker.js  (BullMQ consumer, runs Playwright)
+#
+# SWEEP_BROWSER_HEADFUL=1 wraps node in xvfb-run for headful chromium.
+ENV ROLE=api
+
+CMD ["sh", "-c", "\
+  SCRIPT=server.js; \
+  if [ \"$ROLE\" = \"worker\" ]; then SCRIPT=worker.js; fi; \
+  if [ \"$SWEEP_BROWSER_HEADFUL\" = \"1\" ]; then \
+    exec xvfb-run -a --server-args='-screen 0 1920x1080x24' node $SCRIPT; \
+  else \
+    exec node $SCRIPT; \
+  fi"]

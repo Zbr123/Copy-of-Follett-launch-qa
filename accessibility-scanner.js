@@ -321,4 +321,4 @@ async function scanStore(browser, store, sendEvent) {
   sendEvent({ type: 'ada-store-complete', store: storeName, pages: pageResults });
 }
 
-module.exports = { runAccessibilityScan };
+module.exports = { runAccessibilityScan, scanStore };

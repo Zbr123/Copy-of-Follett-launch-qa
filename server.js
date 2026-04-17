@@ -5,6 +5,13 @@ const { runTests } = require('./test-runner');
 const { runAccessibilityScan } = require('./accessibility-scanner');
 const { chromium } = require('playwright');
 const sweepWorker = require('./sweep-worker');
+const {
+  storeTestQueue,
+  adaScanQueue,
+  subscribeToRun,
+  initRunStatus,
+  getRunStatus,
+} = require('./lib/queue');
 
 const app = express();
 const PORT = process.env.PORT || 3847;
@@ -24,7 +31,21 @@ app.use('/screenshots', express.static(SCREENSHOTS_DIR));
 const RUNS_DIR = path.join(DATA_DIR, 'runs');
 if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR, { recursive: true });
 
-// SSE endpoint for real-time test results
+// ── SSE endpoint for real-time test results ──
+// Flow:
+//   1. Create a runId and initial run record (stored as JSON on disk).
+//   2. Initialize per-run Redis counters (total, completed, failed).
+//   3. Enqueue one BullMQ job per store. Workers pick them up and
+//      publish progress events to `run:<runId>` in Redis.
+//   4. Subscribe to that Redis channel and forward each event to this
+//      SSE stream. Also update the on-disk JSON as `test-result`
+//      events arrive, so run history survives server restarts.
+//   5. When all stores have completed (success or failure), send a
+//      `complete` event and close the stream.
+//
+// Because the work happens in worker processes, multiple users can hit
+// this endpoint concurrently without blocking each other — the API
+// process only does bookkeeping and streaming.
 app.post('/api/run-tests', async (req, res) => {
   const { stores, tests, concurrency } = req.body;
 
@@ -48,7 +69,7 @@ app.post('/api/run-tests', async (req, res) => {
     startedAt: new Date().toISOString(),
     stores: stores.map(s => s.newStore),
     tests,
-    concurrency: concurrency || 3,
+    concurrency: concurrency || 3, // now a legacy hint only — real concurrency = worker count × WORKER_CONCURRENCY
     results: [],
     status: 'running',
   };
@@ -57,8 +78,20 @@ app.post('/api/run-tests', async (req, res) => {
   // Track screenshots per store+test as they arrive
   const screenshotTracker = {}; // key: "store|testId" → [{ src, label }]
 
-  const sendEvent = (data) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  // Writes to the run JSON are debounced — on a big run we might see
+  // hundreds of events per second and we don't want to thrash the disk.
+  let pendingWrite = null;
+  const scheduleWrite = () => {
+    if (pendingWrite) return;
+    pendingWrite = setTimeout(() => {
+      pendingWrite = null;
+      try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
+    }, 250);
+  };
+
+  const handleEvent = (data) => {
+    // Forward to the SSE client (if still connected).
+    try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch (_) {}
 
     // Collect screenshots from progress events
     if (data.type === 'test-progress' && data.screenshot) {
@@ -79,27 +112,107 @@ app.post('/api/run-tests', async (req, res) => {
         screenshots: screenshotTracker[key] || [],
         timestamp: new Date().toISOString(),
       });
-      try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
+      scheduleWrite();
     }
   };
 
+  // Disconnect detection — if the browser closes its SSE connection the
+  // run keeps executing on the workers (that's the whole point of
+  // decoupling via the queue). We only tear down our subscription here.
+  let unsubscribe = null;
+  let finished = false;
+  req.on('close', () => {
+    if (unsubscribe) { unsubscribe().catch(() => {}); unsubscribe = null; }
+  });
+
   try {
-    await runTests(stores, tests, sendEvent, { concurrency: concurrency || 3 });
+    await initRunStatus(runId, stores.length);
+
+    // Subscribe BEFORE enqueuing so we can't miss the very first event.
+    unsubscribe = await subscribeToRun(runId, handleEvent);
+
+    // Enqueue one job per store. Priority = store index + 1 so runs
+    // round-robin instead of one big run starving everyone else.
+    // BullMQ processes lower priority numbers first and FIFO within
+    // the same priority, so:
+    //   User A submits [a1, a2, …, a50] at t=0
+    //   User B submits [b1, b2, b3]     at t=1
+    // Order:  a1 → b1 → a2 → b2 → a3 → b3 → a4 → a5 → … → a50
+    // B's small run finishes after 3 slots even though A was first.
+    const queue = storeTestQueue();
+    await Promise.all(
+      stores.map((store, idx) =>
+        queue.add(
+          'store-test',
+          { runId, store, testIds: tests },
+          {
+            jobId: `${runId}:${idx}:${store.newStore}`,
+            priority: idx + 1,
+          }
+        )
+      )
+    );
+
+    // Send an initial summary event so the frontend can render the
+    // per-store grid immediately. Include queue stats so the user can
+    // see how busy the system is at submission time ("12 stores ahead
+    // of you across 2 active workers").
+    let queueSnapshot = {};
+    try {
+      const counts = await queue.getJobCounts('wait', 'active');
+      const workers = await queue.getWorkers();
+      // Subtract this run's own jobs from the `wait` count so the number
+      // represents work ahead of *this* user, not their own submission.
+      const othersWaiting = Math.max(0, counts.wait - stores.length);
+      queueSnapshot = {
+        othersWaiting,
+        inFlight: counts.active,
+        workers: workers.length,
+      };
+    } catch (_) {}
+    handleEvent({
+      type: 'run-start',
+      runId,
+      totalStores: stores.length,
+      queue: queueSnapshot,
+    });
+
+    // Poll the run counter until all stores have completed (or failed).
+    // This is a lightweight check — ~1 hit to Redis per second.
+    await new Promise((resolve) => {
+      const interval = setInterval(async () => {
+        if (finished) return;
+        const status = await getRunStatus(runId).catch(() => null);
+        if (status && (status.completed + status.failed) >= status.total) {
+          finished = true;
+          clearInterval(interval);
+          resolve();
+        }
+      }, 1000);
+    });
+
+    // Flush any pending disk write before we finalize.
+    if (pendingWrite) { clearTimeout(pendingWrite); pendingWrite = null; }
     runData.status = 'complete';
     runData.completedAt = new Date().toISOString();
-    fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
-    sendEvent({ type: 'complete' });
+    try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
+
+    handleEvent({ type: 'complete' });
   } catch (err) {
+    console.error('[api/run-tests] error:', err);
     runData.status = 'error';
     runData.error = err.message;
-    fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
-    sendEvent({ type: 'error', message: err.message });
+    try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
+    try { res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`); } catch (_) {}
+  } finally {
+    if (unsubscribe) { unsubscribe().catch(() => {}); unsubscribe = null; }
+    try { res.end(); } catch (_) {}
   }
-
-  res.end();
 });
 
 // ── Accessibility scan SSE endpoint ──
+// Same queue-based pattern as /api/run-tests: enqueue one ada-scan job
+// per store, subscribe to Redis, forward events to SSE.
 app.post('/api/accessibility-scan', async (req, res) => {
   const { stores } = req.body;
   if (!stores || !stores.length) return res.status(400).json({ error: 'No stores provided' });
@@ -108,18 +221,120 @@ app.post('/api/accessibility-scan', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  const sendEvent = (data) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  const runId = `ada-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+
+  const handleEvent = (data) => {
+    try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch (_) {}
   };
 
-  try {
-    await runAccessibilityScan(stores, sendEvent);
-    sendEvent({ type: 'ada-complete' });
-  } catch (err) {
-    sendEvent({ type: 'ada-error', message: err.message });
-  }
+  let unsubscribe = null;
+  let finished = false;
+  req.on('close', () => {
+    if (unsubscribe) { unsubscribe().catch(() => {}); unsubscribe = null; }
+  });
 
-  res.end();
+  try {
+    await initRunStatus(runId, stores.length);
+    unsubscribe = await subscribeToRun(runId, handleEvent);
+
+    const queue = adaScanQueue();
+    await Promise.all(
+      stores.map((store, idx) =>
+        queue.add(
+          'ada-scan',
+          { runId, store },
+          {
+            jobId: `${runId}:${idx}:${store.newStore}`,
+            priority: idx + 1, // fair-share across concurrent scans
+          }
+        )
+      )
+    );
+
+    await new Promise((resolve) => {
+      const interval = setInterval(async () => {
+        if (finished) return;
+        const status = await getRunStatus(runId).catch(() => null);
+        if (status && (status.completed + status.failed) >= status.total) {
+          finished = true;
+          clearInterval(interval);
+          resolve();
+        }
+      }, 1000);
+    });
+
+    handleEvent({ type: 'ada-complete' });
+  } catch (err) {
+    console.error('[api/accessibility-scan] error:', err);
+    try { res.write(`data: ${JSON.stringify({ type: 'ada-error', message: err.message })}\n\n`); } catch (_) {}
+  } finally {
+    if (unsubscribe) { unsubscribe().catch(() => {}); unsubscribe = null; }
+    try { res.end(); } catch (_) {}
+  }
+});
+
+// ── Health + capacity monitoring ──
+// These two endpoints make multi-user ops easy to debug:
+//   GET /api/health       — is Redis reachable? are workers online?
+//   GET /api/queue/stats  — queue depth, in-flight jobs, worker counts
+// Point a dashboard (or just curl) at them when the system feels slow.
+
+app.get('/api/health', async (req, res) => {
+  const { sharedRedis } = require('./lib/queue');
+  const health = { status: 'ok', redis: 'unknown', workers: 0, timestamp: new Date().toISOString() };
+  try {
+    const pong = await sharedRedis().ping();
+    health.redis = pong === 'PONG' ? 'ok' : 'degraded';
+  } catch (err) {
+    health.status = 'degraded';
+    health.redis = `error: ${err.message}`;
+  }
+  try {
+    const q = storeTestQueue();
+    const workers = await q.getWorkers();
+    health.workers = workers.length;
+    if (health.workers === 0) health.status = 'degraded';
+  } catch (err) {
+    health.status = 'degraded';
+    health.workersError = err.message;
+  }
+  res.status(health.status === 'ok' ? 200 : 503).json(health);
+});
+
+app.get('/api/queue/stats', async (req, res) => {
+  try {
+    const storeQ = storeTestQueue();
+    const adaQ = adaScanQueue();
+    const [storeCounts, adaCounts, storeWorkers, adaWorkers] = await Promise.all([
+      storeQ.getJobCounts('wait', 'active', 'delayed', 'completed', 'failed'),
+      adaQ.getJobCounts('wait', 'active', 'delayed', 'completed', 'failed'),
+      storeQ.getWorkers(),
+      adaQ.getWorkers(),
+    ]);
+    // Total parallel capacity = count of online workers × their configured concurrency.
+    // BullMQ doesn't expose per-worker concurrency directly, but workers
+    // register with a `name` that typically includes it — we just report
+    // the worker count and let ops know to multiply by WORKER_CONCURRENCY.
+    res.json({
+      storeTest: {
+        queued: storeCounts.wait + storeCounts.delayed,
+        inFlight: storeCounts.active,
+        completed: storeCounts.completed,
+        failed: storeCounts.failed,
+        workers: storeWorkers.length,
+      },
+      adaScan: {
+        queued: adaCounts.wait + adaCounts.delayed,
+        inFlight: adaCounts.active,
+        completed: adaCounts.completed,
+        failed: adaCounts.failed,
+        workers: adaWorkers.length,
+      },
+      note: 'Total parallel store-tests = workers × WORKER_CONCURRENCY env var',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Accessibility PDF Report ──

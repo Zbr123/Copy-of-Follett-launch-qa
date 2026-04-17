@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
+    "worker": "node worker.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -13,7 +14,9 @@
   "type": "commonjs",
   "dependencies": {
     "@axe-core/playwright": "^4.11.1",
+    "bullmq": "^5.34.0",
     "express": "^5.2.1",
+    "ioredis": "^5.4.1",
     "playwright": "^1.58.2",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
