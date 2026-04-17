@@ -11,7 +11,9 @@ function screenshotPath(store, page, suffix) {
   const clean = store.replace(/[^a-zA-Z0-9-]/g, '_');
   const dir = path.join(SCREENSHOTS_DIR, clean, 'accessibility');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, `${page}_${suffix}.png`);
+  // Unique suffix so concurrent scans of the same store don't collide.
+  const unique = `${process.pid}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return path.join(dir, `${page}_${suffix}_${unique}.png`);
 }
 
 function screenshotUrl(filePath) {

@@ -190,7 +190,13 @@ const TEST_REGISTRY = {
 
 function screenshotPath(storeName, testId, suffix) {
   const safe = storeName.replace(/[^a-z0-9]/gi, '_');
-  return path.join(SCREENSHOTS_DIR, `${safe}_${testId}_${suffix}.png`);
+  // Append a process-PID + timestamp + random suffix so parallel runs
+  // on the same store (WORKER_CONCURRENCY > 1) never write to the same
+  // file. Without this, two concurrent runs overwrite each other's
+  // screenshots and the worker's inline encoder sees "file missing"
+  // for whichever run deletes it second.
+  const unique = `${process.pid}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return path.join(SCREENSHOTS_DIR, `${safe}_${testId}_${suffix}_${unique}.png`);
 }
 
 function screenshotUrl(filePath) {
