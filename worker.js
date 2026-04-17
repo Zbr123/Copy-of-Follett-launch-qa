@@ -33,92 +33,91 @@ chromiumExtra.use(StealthPlugin());
 
 const WORKER_CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 3);
 
-// ─── Screenshot upload config ────────────────────────────────────────
-// Workers don't have the API's persistent volume, so we upload each
-// captured screenshot to the API over HTTP. The API writes it to its
-// own SCREENSHOTS_DIR and serves it via the static route. If these
-// env vars aren't set, uploads are skipped — the events still fire
-// but the thumbnails will 404 in the browser.
-const API_URL = (process.env.API_URL || '').replace(/\/$/, '');
-const INTERNAL_SECRET = process.env.INTERNAL_SECRET || '';
-const UPLOAD_DISABLED = !API_URL || !INTERNAL_SECRET;
+// ─── Inline screenshot encoding ─────────────────────────────────────
+// Workers used to upload screenshots to the API over HTTP. That path
+// had too many moving parts (shared secret, disk sync, async timing)
+// and was silently dropping files in production. We now base64-encode
+// each screenshot synchronously in the sendEvent callback and embed
+// the data URL directly in the SSE event. The browser renders data
+// URLs identically to file URLs, so the frontend needs no changes.
+//
+// Encoding happens SYNCHRONOUSLY at the moment the test emits its
+// screenshot — which is right after `await page.screenshot({ path })`
+// resolves. This closes the timing gap that was making the file
+// disappear before the old async upload chain could read it.
 
-// Both test-runner.js and accessibility-scanner.js write screenshots
-// under `${__dirname}/screenshots`. Mirror that here so we can locate
-// the file when we see its URL in a SSE event.
 const WORKER_SCREENSHOTS_DIR = path.join(__dirname, 'screenshots');
 if (!fs.existsSync(WORKER_SCREENSHOTS_DIR)) {
   fs.mkdirSync(WORKER_SCREENSHOTS_DIR, { recursive: true });
 }
 
-if (UPLOAD_DISABLED) {
-  console.warn('[worker] screenshot uploads disabled — set API_URL and INTERNAL_SECRET to enable. Thumbnails will 404 until this is fixed.');
-} else {
-  console.log(`[worker] screenshots will upload to ${API_URL}`);
+console.log('[worker] screenshots: inline base64 mode (no upload)');
+
+// Size cap on the image we're willing to embed. Anything over this is
+// dropped with a warning — 5 MB of base64 (~3.7 MB raw) is generous
+// for a typical Playwright viewport shot.
+const MAX_INLINE_BYTES = 5 * 1024 * 1024;
+
+// Read one file and return a data URL, or null if the file is missing
+// or oversized. Never throws.
+function fileToDataUrl(localPath) {
+  try {
+    if (!fs.existsSync(localPath)) {
+      console.warn(`[worker] inline skipped — file missing: ${localPath}`);
+      return null;
+    }
+    const size = fs.statSync(localPath).size;
+    if (size > MAX_INLINE_BYTES) {
+      console.warn(`[worker] inline skipped — file too large (${size} bytes): ${localPath}`);
+      return null;
+    }
+    const data = fs.readFileSync(localPath);
+    const ext = path.extname(localPath).toLowerCase();
+    const mime =
+      ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+      ext === '.webp' ? 'image/webp' :
+      ext === '.gif' ? 'image/gif' :
+      'image/png';
+    // Free the ephemeral copy immediately — the bytes now live in the
+    // event and will flow through Redis to the browser. Keeping the
+    // file wastes disk on long-running workers.
+    try { fs.unlinkSync(localPath); } catch (_) {}
+    return `data:${mime};base64,${data.toString('base64')}`;
+  } catch (err) {
+    console.warn(`[worker] inline failed for ${localPath}: ${err.message}`);
+    return null;
+  }
 }
 
-// Upload a single screenshot file to the API. Returns true on success,
-// false on failure (never throws). Best-effort — a missing screenshot
-// does not fail the test.
-async function uploadScreenshot(screenshotUrl) {
-  if (UPLOAD_DISABLED) {
-    console.warn(`[worker] upload skipped (disabled): ${screenshotUrl}`);
-    return false;
-  }
-  if (!screenshotUrl || typeof screenshotUrl !== 'string') return false;
-  if (!screenshotUrl.startsWith('/screenshots/')) {
-    console.warn(`[worker] upload skipped (unexpected URL): ${screenshotUrl}`);
-    return false;
-  }
-
-  const relPath = screenshotUrl.substring('/screenshots/'.length);
-  if (!relPath || relPath.includes('..')) {
-    console.warn(`[worker] upload skipped (bad relPath): ${relPath}`);
-    return false;
-  }
-
+// If a value looks like a /screenshots/... URL produced by test-runner
+// or accessibility-scanner, resolve it to a disk path and replace with
+// a data URL. Mutates the parent object in place.
+function maybeInlineScreenshotField(obj, key) {
+  const v = obj[key];
+  if (typeof v !== 'string') return;
+  if (!v.startsWith('/screenshots/')) return;
+  const relPath = v.substring('/screenshots/'.length);
+  if (!relPath || relPath.includes('..')) return;
   const localPath = path.join(WORKER_SCREENSHOTS_DIR, relPath);
-  if (!fs.existsSync(localPath)) {
-    console.warn(`[worker] upload skipped — file not found on disk: ${localPath} (url=${screenshotUrl})`);
-    return false;
+  const dataUrl = fileToDataUrl(localPath);
+  if (dataUrl) obj[key] = dataUrl;
+}
+
+// Walk an event object and inline every `screenshot` field we find,
+// including nested ones inside accessibility violations + nodes.
+function inlineScreenshotsDeep(obj) {
+  if (!obj || typeof obj !== 'object') return;
+  if (Array.isArray(obj)) {
+    for (const item of obj) inlineScreenshotsDeep(item);
+    return;
   }
-
-  const size = fs.statSync(localPath).size;
-  const data = fs.readFileSync(localPath);
-  const uploadUrl = `${API_URL}/api/internal/screenshots/${relPath.split('/').map(encodeURIComponent).join('/')}`;
-  console.log(`[worker] upload start — ${size} bytes → ${uploadUrl}`);
-
-  // One retry on transient failure. Keep timeout tight — screenshots
-  // are small and the internal network is fast.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 10000);
-      const resp = await fetch(uploadUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'image/png',
-          'X-Internal-Secret': INTERNAL_SECRET,
-        },
-        body: data,
-        signal: ctrl.signal,
-      });
-      clearTimeout(timer);
-      if (resp.ok) {
-        console.log(`[worker] upload ok — ${uploadUrl}`);
-        // Free the ephemeral copy — keeps worker RAM/disk from bloating
-        // over long-running sessions.
-        try { fs.unlinkSync(localPath); } catch (_) {}
-        return true;
-      }
-      const body = await resp.text().catch(() => '');
-      console.warn(`[worker] screenshot upload ${uploadUrl} returned HTTP ${resp.status}: ${body.slice(0, 200)}`);
-    } catch (err) {
-      console.warn(`[worker] screenshot upload ${uploadUrl} failed (attempt ${attempt + 1}): ${err.message}`);
+  for (const key of Object.keys(obj)) {
+    if (key === 'screenshot') {
+      maybeInlineScreenshotField(obj, key);
+    } else if (obj[key] && typeof obj[key] === 'object') {
+      inlineScreenshotsDeep(obj[key]);
     }
-    await new Promise(r => setTimeout(r, 500));
   }
-  return false;
 }
 
 // Launch a single browser per worker process — reused across all jobs
@@ -161,19 +160,20 @@ const storeTestWorker = new Worker(
 
     console.log(`[worker] store-test start — run=${runId} store=${store.newStore}`);
 
-    // Serialize events through a promise chain so (a) screenshot
-    // uploads complete before their event is published, and (b) events
-    // are delivered in the order they were emitted.
+    // Inline any screenshot files SYNCHRONOUSLY before the event is
+    // queued for publish — this guarantees we read the file while it's
+    // fresh on disk (right after page.screenshot resolved) rather than
+    // racing an async chain that might run long after the file is gone.
     let eventChain = Promise.resolve();
     const sendEvent = (event) => {
+      try { inlineScreenshotsDeep(event); } catch (err) {
+        console.warn('[worker] inline encode failed:', err.message);
+      }
       eventChain = eventChain.then(async () => {
         try {
-          if (event && event.screenshot) {
-            await uploadScreenshot(event.screenshot);
-          }
           await publishEvent(runId, event);
         } catch (err) {
-          console.warn('[worker] event processing error:', err.message);
+          console.warn('[worker] publish failed:', err.message);
         }
       });
     };
@@ -216,43 +216,19 @@ const adaScanWorker = new Worker(
 
     console.log(`[worker] ada-scan start — run=${runId} store=${store.newStore}`);
 
-    // Same serialized upload-then-publish pattern as the store-test worker.
+    // Same synchronous-inline pattern as the store-test worker.
+    // `inlineScreenshotsDeep` walks the entire event tree and handles
+    // the nested screenshots inside accessibility violations & nodes.
     let eventChain = Promise.resolve();
     const sendEvent = (event) => {
+      try { inlineScreenshotsDeep(event); } catch (err) {
+        console.warn('[worker] inline encode failed:', err.message);
+      }
       eventChain = eventChain.then(async () => {
         try {
-          if (event && event.screenshot) {
-            await uploadScreenshot(event.screenshot);
-          }
-          // Accessibility violations also carry per-node screenshots
-          // nested inside `violations[].nodes[].screenshot`.
-          if (event && Array.isArray(event.violations)) {
-            for (const v of event.violations) {
-              if (v && Array.isArray(v.nodes)) {
-                for (const n of v.nodes) {
-                  if (n && n.screenshot) await uploadScreenshot(n.screenshot);
-                }
-              }
-            }
-          }
-          // Page-level screenshot field on ada-page-result.
-          if (event && event.pages && Array.isArray(event.pages)) {
-            for (const p of event.pages) {
-              if (p && p.screenshot) await uploadScreenshot(p.screenshot);
-              if (p && Array.isArray(p.violations)) {
-                for (const v of p.violations) {
-                  if (v && Array.isArray(v.nodes)) {
-                    for (const n of v.nodes) {
-                      if (n && n.screenshot) await uploadScreenshot(n.screenshot);
-                    }
-                  }
-                }
-              }
-            }
-          }
           await publishEvent(runId, event);
         } catch (err) {
-          console.warn('[worker] ada event processing error:', err.message);
+          console.warn('[worker] publish failed:', err.message);
         }
       });
     };

@@ -299,66 +299,10 @@ app.post('/api/accessibility-scan', async (req, res) => {
   }
 });
 
-// ── Internal screenshot upload endpoint ──
-// Workers run in separate Railway services with their own ephemeral
-// filesystems, so a screenshot captured by a worker never lands on the
-// API's persistent volume on its own. To keep `/screenshots/*.png`
-// URLs working, workers POST each captured image to this endpoint; we
-// write it to SCREENSHOTS_DIR on the API's volume and then the normal
-// static route serves it back to the browser.
-//
-// Authentication is a shared secret in the `X-Internal-Secret` header.
-// Set the same value in INTERNAL_SECRET on both the API service and
-// every worker service in Railway.
-const INTERNAL_SECRET = process.env.INTERNAL_SECRET || '';
-if (!INTERNAL_SECRET) {
-  console.warn('[api] INTERNAL_SECRET is not set — screenshot uploads from workers will be rejected. Set this env var on both API and worker services.');
-}
-
-// Raw body parser for image uploads (max 20 MB per shot). Scoped to
-// this route so it doesn't interfere with the JSON parser above.
-const uploadBodyParser = express.raw({ type: '*/*', limit: '20mb' });
-
-// Regex route rather than `/api/internal/screenshots/*` because Express
-// 5 / path-to-regexp v8 no longer accepts bare `*` wildcards — the
-// regex form is portable across versions and captures the remainder of
-// the path into req.params[0].
-app.post(/^\/api\/internal\/screenshots\/(.+)$/, uploadBodyParser, (req, res) => {
-  // Constant-time-ish header check (string compare is fine here — the
-  // threat model is accidental exposure, not timing attacks).
-  if (!INTERNAL_SECRET || req.get('X-Internal-Secret') !== INTERNAL_SECRET) {
-    return res.status(403).json({ error: 'forbidden' });
-  }
-
-  const relPath = req.params[0] || '';
-  if (!relPath || relPath.includes('..') || path.isAbsolute(relPath)) {
-    return res.status(400).json({ error: 'invalid path' });
-  }
-
-  const dest = path.resolve(path.join(SCREENSHOTS_DIR, relPath));
-  // Double-check the resolved path stays inside SCREENSHOTS_DIR.
-  if (!dest.startsWith(path.resolve(SCREENSHOTS_DIR) + path.sep) && dest !== path.resolve(SCREENSHOTS_DIR)) {
-    return res.status(400).json({ error: 'path escapes screenshots dir' });
-  }
-
-  // Only accept image extensions.
-  if (!/\.(png|jpg|jpeg|webp|gif)$/i.test(dest)) {
-    return res.status(400).json({ error: 'only image extensions allowed' });
-  }
-
-  if (!req.body || !req.body.length) {
-    return res.status(400).json({ error: 'empty body' });
-  }
-
-  try {
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, req.body);
-    res.json({ ok: true, bytes: req.body.length });
-  } catch (err) {
-    console.error('[api/internal/screenshots] write failed:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
+// NOTE: The /api/internal/screenshots/* upload endpoint was removed.
+// Workers now base64-encode screenshots directly into the SSE event
+// payload (see worker.js). No shared volume, no shared secret, no
+// network round-trip per screenshot — the bytes travel with the event.
 
 // ── Health + capacity monitoring ──
 // These two endpoints make multi-user ops easy to debug:
