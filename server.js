@@ -319,15 +319,17 @@ if (!INTERNAL_SECRET) {
 // this route so it doesn't interfere with the JSON parser above.
 const uploadBodyParser = express.raw({ type: '*/*', limit: '20mb' });
 
-app.post('/api/internal/screenshots/*', uploadBodyParser, (req, res) => {
+// Regex route rather than `/api/internal/screenshots/*` because Express
+// 5 / path-to-regexp v8 no longer accepts bare `*` wildcards — the
+// regex form is portable across versions and captures the remainder of
+// the path into req.params[0].
+app.post(/^\/api\/internal\/screenshots\/(.+)$/, uploadBodyParser, (req, res) => {
   // Constant-time-ish header check (string compare is fine here — the
   // threat model is accidental exposure, not timing attacks).
   if (!INTERNAL_SECRET || req.get('X-Internal-Secret') !== INTERNAL_SECRET) {
     return res.status(403).json({ error: 'forbidden' });
   }
 
-  // Express captures the `*` path segment(s) in req.params[0]. Prevent
-  // path traversal (../../etc/passwd) and absolute paths.
   const relPath = req.params[0] || '';
   if (!relPath || relPath.includes('..') || path.isAbsolute(relPath)) {
     return res.status(400).json({ error: 'invalid path' });
