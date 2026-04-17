@@ -13,6 +13,19 @@ const {
   getRunStatus,
 } = require('./lib/queue');
 
+// BullMQ reserves `:` in custom job IDs for its internal Redis key
+// scheme. Store URLs like "https://bkstr-0300.myshopify.com" contain
+// colons (in the scheme and optionally a port), so we have to strip
+// them — along with any other Redis-unfriendly characters — before
+// passing the ID to BullMQ.
+function safeJobId(...parts) {
+  return parts
+    .map(String)
+    .join('-')
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .slice(0, 200);
+}
+
 const app = express();
 const PORT = process.env.PORT || 3847;
 
@@ -156,7 +169,7 @@ app.post('/api/run-tests', async (req, res) => {
           'store-test',
           { runId, store, testIds: tests },
           {
-            jobId: `${runId}:${idx}:${store.newStore}`,
+            jobId: safeJobId(runId, idx, store.newStore),
             priority: idx + 1,
           }
         )
@@ -257,7 +270,7 @@ app.post('/api/accessibility-scan', async (req, res) => {
           'ada-scan',
           { runId, store },
           {
-            jobId: `${runId}:${idx}:${store.newStore}`,
+            jobId: safeJobId(runId, idx, store.newStore),
             priority: idx + 1, // fair-share across concurrent scans
           }
         )
@@ -283,6 +296,65 @@ app.post('/api/accessibility-scan', async (req, res) => {
   } finally {
     if (unsubscribe) { unsubscribe().catch(() => {}); unsubscribe = null; }
     try { res.end(); } catch (_) {}
+  }
+});
+
+// ── Internal screenshot upload endpoint ──
+// Workers run in separate Railway services with their own ephemeral
+// filesystems, so a screenshot captured by a worker never lands on the
+// API's persistent volume on its own. To keep `/screenshots/*.png`
+// URLs working, workers POST each captured image to this endpoint; we
+// write it to SCREENSHOTS_DIR on the API's volume and then the normal
+// static route serves it back to the browser.
+//
+// Authentication is a shared secret in the `X-Internal-Secret` header.
+// Set the same value in INTERNAL_SECRET on both the API service and
+// every worker service in Railway.
+const INTERNAL_SECRET = process.env.INTERNAL_SECRET || '';
+if (!INTERNAL_SECRET) {
+  console.warn('[api] INTERNAL_SECRET is not set — screenshot uploads from workers will be rejected. Set this env var on both API and worker services.');
+}
+
+// Raw body parser for image uploads (max 20 MB per shot). Scoped to
+// this route so it doesn't interfere with the JSON parser above.
+const uploadBodyParser = express.raw({ type: '*/*', limit: '20mb' });
+
+app.post('/api/internal/screenshots/*', uploadBodyParser, (req, res) => {
+  // Constant-time-ish header check (string compare is fine here — the
+  // threat model is accidental exposure, not timing attacks).
+  if (!INTERNAL_SECRET || req.get('X-Internal-Secret') !== INTERNAL_SECRET) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+
+  // Express captures the `*` path segment(s) in req.params[0]. Prevent
+  // path traversal (../../etc/passwd) and absolute paths.
+  const relPath = req.params[0] || '';
+  if (!relPath || relPath.includes('..') || path.isAbsolute(relPath)) {
+    return res.status(400).json({ error: 'invalid path' });
+  }
+
+  const dest = path.resolve(path.join(SCREENSHOTS_DIR, relPath));
+  // Double-check the resolved path stays inside SCREENSHOTS_DIR.
+  if (!dest.startsWith(path.resolve(SCREENSHOTS_DIR) + path.sep) && dest !== path.resolve(SCREENSHOTS_DIR)) {
+    return res.status(400).json({ error: 'path escapes screenshots dir' });
+  }
+
+  // Only accept image extensions.
+  if (!/\.(png|jpg|jpeg|webp|gif)$/i.test(dest)) {
+    return res.status(400).json({ error: 'only image extensions allowed' });
+  }
+
+  if (!req.body || !req.body.length) {
+    return res.status(400).json({ error: 'empty body' });
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, req.body);
+    res.json({ ok: true, bytes: req.body.length });
+  } catch (err) {
+    console.error('[api/internal/screenshots] write failed:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
