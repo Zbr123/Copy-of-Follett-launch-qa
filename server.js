@@ -56,10 +56,20 @@ app.post('/api/run-tests', async (req, res) => {
     return res.status(400).json({ error: 'No tests selected' });
   }
 
-  // Set up SSE
+  // Set up SSE — flushHeaders() forces Express/Node to send headers
+  // immediately so the browser opens the stream and starts receiving
+  // events as soon as we write them (instead of buffering until the
+  // first ~16 KB of body accumulates).
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disables buffering in nginx/Railway proxies
+  res.flushHeaders();
+
+  // Send an initial heartbeat immediately so the client knows the
+  // stream is alive — prevents the "stuck on Running…" symptom when
+  // Redis or workers are down and the rest of this handler stalls.
+  res.write(`data: ${JSON.stringify({ type: 'connecting' })}\n\n`);
 
   // Create a run record for persistence
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
@@ -220,6 +230,9 @@ app.post('/api/accessibility-scan', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+  res.write(`data: ${JSON.stringify({ type: 'connecting' })}\n\n`);
 
   const runId = `ada-${new Date().toISOString().replace(/[:.]/g, '-')}`;
 
@@ -281,36 +294,68 @@ app.post('/api/accessibility-scan', async (req, res) => {
 
 app.get('/api/health', async (req, res) => {
   const { sharedRedis } = require('./lib/queue');
-  const health = { status: 'ok', redis: 'unknown', workers: 0, timestamp: new Date().toISOString() };
+
+  // Every Redis-touching call is wrapped in Promise.race against a 3s
+  // timeout so the health endpoint can't hang, even if the BullMQ
+  // client is configured for infinite retries.
+  const withTimeout = (p, ms, label) =>
+    Promise.race([
+      p,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+      ),
+    ]);
+
+  const health = {
+    status: 'ok',
+    redis: 'unknown',
+    workers: 0,
+    redisUrl: (process.env.REDIS_URL || 'redis://localhost:6379').replace(/\/\/[^@]*@/, '//***@'),
+    timestamp: new Date().toISOString(),
+  };
+
   try {
-    const pong = await sharedRedis().ping();
+    const pong = await withTimeout(sharedRedis().ping(), 3000, 'redis ping');
     health.redis = pong === 'PONG' ? 'ok' : 'degraded';
   } catch (err) {
     health.status = 'degraded';
     health.redis = `error: ${err.message}`;
   }
+
   try {
     const q = storeTestQueue();
-    const workers = await q.getWorkers();
+    const workers = await withTimeout(q.getWorkers(), 3000, 'getWorkers');
     health.workers = workers.length;
     if (health.workers === 0) health.status = 'degraded';
   } catch (err) {
     health.status = 'degraded';
     health.workersError = err.message;
   }
+
   res.status(health.status === 'ok' ? 200 : 503).json(health);
 });
 
 app.get('/api/queue/stats', async (req, res) => {
+  const withTimeout = (p, ms, label) =>
+    Promise.race([
+      p,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+      ),
+    ]);
   try {
     const storeQ = storeTestQueue();
     const adaQ = adaScanQueue();
-    const [storeCounts, adaCounts, storeWorkers, adaWorkers] = await Promise.all([
-      storeQ.getJobCounts('wait', 'active', 'delayed', 'completed', 'failed'),
-      adaQ.getJobCounts('wait', 'active', 'delayed', 'completed', 'failed'),
-      storeQ.getWorkers(),
-      adaQ.getWorkers(),
-    ]);
+    const [storeCounts, adaCounts, storeWorkers, adaWorkers] = await withTimeout(
+      Promise.all([
+        storeQ.getJobCounts('wait', 'active', 'delayed', 'completed', 'failed'),
+        adaQ.getJobCounts('wait', 'active', 'delayed', 'completed', 'failed'),
+        storeQ.getWorkers(),
+        adaQ.getWorkers(),
+      ]),
+      5000,
+      'queue stats'
+    );
     // Total parallel capacity = count of online workers × their configured concurrency.
     // BullMQ doesn't expose per-worker concurrency directly, but workers
     // register with a `name` that typically includes it — we just report
