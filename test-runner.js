@@ -188,42 +188,58 @@ const TEST_REGISTRY = {
   },
 };
 
-// ─── Screenshot capture: disk-backed with HTTP URLs ──────────────────
+// ─── Screenshot capture: memory-only, no filesystem ──────────────────
 // Every call site uses the pattern:
 //   const shot = screenshotPath(...);
 //   await page.screenshot({ path: shot, fullPage: false });
 //   emit({ screenshot: screenshotUrl(shot), ... });
 //
-// Screenshots are written to `$DATA_DIR/screenshots/` (a shared Railway
-// volume — server.js mounts the same path and serves it as a static
-// route at `/screenshots/*`). Events carry only the HTTP URL, never
-// the base64 bytes. This is what makes 1000-store runs tractable:
-// inlining base64 screenshots in events would push ~4GB per run
-// through Redis and into the run JSON file.
+// wrapPageForCapture() monkey-patches `page.screenshot` so it captures
+// the buffer in a Map keyed by the pseudo-path. screenshotUrl() then
+// returns the buffer as a base64 data URL. The browser renders data
+// URLs natively so the frontend needs no changes.
 //
-// Filename uniqueness: every path includes pid + timestamp + 6-char
-// nonce, so concurrent workers writing to the same store can't
-// collide. Cleanup of old files is handled by server.js's periodic
-// sweeps of the runs/ + screenshots/ trees.
+// TODO — switching this to disk-backed screenshots would cut Redis
+// memory usage by ~100x at 1000-store scale, but requires both Railway
+// services (server + worker) to mount the SAME volume. Until that's
+// verified, in-memory base64 is the only mode that doesn't risk 404s.
+
+const screenshotBuffers = new Map(); // pseudo-path → Buffer
 
 function screenshotPath(storeName, testId, suffix) {
   const safe = storeName.replace(/[^a-z0-9]/gi, '_');
   const unique = `${process.pid}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  // Synthetic path string used purely as the Map key — never written to disk.
   return path.join(SCREENSHOTS_DIR, `${safe}_${testId}_${suffix}_${unique}.png`);
 }
 
 function screenshotUrl(filePath) {
-  // Build a URL relative to the screenshots static mount. Using
-  // path.relative() tolerates nested subdirs (e.g. accessibility scans
-  // that group by store) as well as the flat layout used here.
-  const rel = path.relative(SCREENSHOTS_DIR, filePath).split(path.sep).join('/');
-  return '/screenshots/' + rel;
+  const buf = screenshotBuffers.get(filePath);
+  if (buf) {
+    // One-time read: drop from cache so RAM doesn't grow unbounded.
+    screenshotBuffers.delete(filePath);
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  }
+  // Fallback — shouldn't happen if page was wrapped, but keeps URLs
+  // syntactically valid if someone forgets to wrap a page.
+  return '/screenshots/' + path.basename(filePath);
 }
 
-// Compatibility shim. Previously this monkey-patched page.screenshot
-// to capture buffers in memory; now Playwright writes directly to
-// disk and this is just a pass-through so call sites stay unchanged.
+// Wrap a Playwright Page so page.screenshot({ path, ... }) captures
+// the buffer in-memory instead of writing to disk. Call this right
+// after `await context.newPage()`.
 function wrapPageForCapture(page) {
+  const orig = page.screenshot.bind(page);
+  page.screenshot = async (options = {}) => {
+    const { path: storagePath, ...rest } = options || {};
+    // Strip the `path` option so Playwright returns the buffer without
+    // writing anything to disk.
+    const buffer = await orig(rest);
+    if (storagePath) {
+      screenshotBuffers.set(storagePath, buffer);
+    }
+    return buffer;
+  };
   return page;
 }
 
@@ -262,6 +278,14 @@ const BLOCKED_URL_PATTERNS = [
 const BLOCKED_RESOURCE_TYPES = new Set(['font', 'media', 'websocket']);
 
 async function installBandwidthBlocking(context) {
+  // IMPORTANT: `context.route()` on a remote CDP browser makes every
+  // single request round-trip back to this Node process (abort vs.
+  // continue must be decided here). With Bright Data's residential
+  // proxy adding ~500ms-2s per request on top, a page with 50 assets
+  // can push past page.goto's 10-20s timeouts just in routing
+  // overhead. Skip client-side blocking in remote mode — we'll add
+  // browser-side `Network.setBlockedURLs` as a follow-up.
+  if (process.env.BROWSER_WS_URL) return;
   try {
     await context.route('**/*', (route) => {
       try {

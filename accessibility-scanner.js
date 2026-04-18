@@ -16,17 +16,30 @@ function screenshotPath(store, page, suffix) {
   return path.join(dir, `${page}_${suffix}_${unique}.png`);
 }
 
-// Disk-backed screenshots with HTTP URLs. Same rationale as
-// test-runner.js — inlining base64 in events OOMs Redis at scale.
-// Files land under `$DATA_DIR/screenshots/<store>/accessibility/`,
-// which server.js serves at `/screenshots/*`.
+// Memory-only screenshot capture (see test-runner.js for rationale).
+// Buffers are stashed by wrapPageForCapture and read back here as
+// base64 data URLs so the filesystem is never involved.
+const adaScreenshotBuffers = new Map();
+
 function screenshotUrl(filePath) {
-  const rel = path.relative(SCREENSHOTS_DIR, filePath).split(path.sep).join('/');
-  return '/screenshots/' + rel;
+  const buf = adaScreenshotBuffers.get(filePath);
+  if (buf) {
+    adaScreenshotBuffers.delete(filePath);
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  }
+  // Fallback preserves the original URL shape if an unwrapped page
+  // ever slips through — avoids crashes at the cost of a broken image.
+  return '/' + path.relative(path.join(__dirname), filePath).replace(/\\/g, '/');
 }
 
-// Compatibility shim — Playwright writes directly to disk now.
 function wrapPageForCapture(page) {
+  const orig = page.screenshot.bind(page);
+  page.screenshot = async (options = {}) => {
+    const { path: storagePath, ...rest } = options || {};
+    const buffer = await orig(rest);
+    if (storagePath) adaScreenshotBuffers.set(storagePath, buffer);
+    return buffer;
+  };
   return page;
 }
 
@@ -59,6 +72,10 @@ const ADA_BLOCKED_URL_PATTERNS = [
 const ADA_BLOCKED_RESOURCE_TYPES = new Set(['font', 'media', 'websocket']);
 
 async function installBandwidthBlocking(context) {
+  // Skip in remote-CDP mode — see the matching rationale in
+  // test-runner.js. Route interception round-trips add too much
+  // latency on top of residential proxies and blow page.goto timeouts.
+  if (process.env.BROWSER_WS_URL) return;
   try {
     await context.route('**/*', (route) => {
       try {
