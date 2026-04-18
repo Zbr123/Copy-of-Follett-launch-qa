@@ -101,18 +101,21 @@ let adaScanBrowser = null;
 //   wss://production-sfo.browserless.io?token=XXX&stealth&blockAds
 //   wss://production-sfo.browserless.io?token=XXX&stealth&proxy=residential
 //   wss://USER:PASS@brd.superproxy.io:9222  (Bright Data)
-// Browserless defaults each session to a 60s timeout unless the caller
-// passes `?timeout=<ms>`. A 60s ceiling kills every real test mid-flight
-// (we saw this in prod — "Target page, context or browser has been
-// closed" immediately after 00:60.000 elapsed). Inject a 10-minute
-// session cap if the user didn't supply one, so each per-job connection
-// has plenty of headroom for a slow store.
+// Browserless enforces a per-session timeout that varies by plan. The
+// default on cheaper plans is 30s, and the MAX allowed `timeout=` value
+// is also plan-scoped (we saw a 400 Bad Request with
+// "Timeout must be an integer between 1 and 60,000 ... for your plan"
+// when we tried 600000). 60,000 is the universal upper bound across
+// current plans, so we inject that if the user didn't specify one —
+// it will never 400, and on plans where the unit is seconds it gives
+// us ~16hrs of session room. If the user wants a specific value they
+// can set it explicitly in BROWSER_WS_URL and we won't override.
 function withBrowserlessTimeout(raw) {
   if (!raw) return raw;
   if (!/browserless\.io/i.test(raw)) return raw; // other providers — leave alone
   if (/[?&]timeout=/i.test(raw)) return raw;     // user already set one
   const sep = raw.includes('?') ? '&' : '?';
-  return `${raw}${sep}timeout=600000`;
+  return `${raw}${sep}timeout=60000`;
 }
 
 const BROWSER_WS_URL = withBrowserlessTimeout(process.env.BROWSER_WS_URL || '');

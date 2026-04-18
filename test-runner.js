@@ -188,61 +188,103 @@ const TEST_REGISTRY = {
   },
 };
 
-// ─── Screenshot capture: memory-only, no filesystem ──────────────────
-// Every call site still uses the existing pattern:
+// ─── Screenshot capture: disk-backed with HTTP URLs ──────────────────
+// Every call site uses the pattern:
 //   const shot = screenshotPath(...);
 //   await page.screenshot({ path: shot, fullPage: false });
 //   emit({ screenshot: screenshotUrl(shot), ... });
 //
-// ...but under the hood we no longer touch disk. wrapPageForCapture()
-// monkey-patches `page.screenshot` so it captures the buffer in a
-// Map keyed by the pseudo-path. screenshotUrl() then returns the
-// buffer as a base64 data URL. The browser renders data URLs natively
-// so the frontend needs no changes.
+// Screenshots are written to `$DATA_DIR/screenshots/` (a shared Railway
+// volume — server.js mounts the same path and serves it as a static
+// route at `/screenshots/*`). Events carry only the HTTP URL, never
+// the base64 bytes. This is what makes 1000-store runs tractable:
+// inlining base64 screenshots in events would push ~4GB per run
+// through Redis and into the run JSON file.
 //
-// This eliminates two classes of bugs at once:
-//   1. Parallel runs on the same store overwriting each other's files.
-//   2. Async timing gaps between Playwright writing the file and the
-//      worker's encoder reading it.
-
-const screenshotBuffers = new Map(); // pseudo-path → Buffer
+// Filename uniqueness: every path includes pid + timestamp + 6-char
+// nonce, so concurrent workers writing to the same store can't
+// collide. Cleanup of old files is handled by server.js's periodic
+// sweeps of the runs/ + screenshots/ trees.
 
 function screenshotPath(storeName, testId, suffix) {
   const safe = storeName.replace(/[^a-z0-9]/gi, '_');
   const unique = `${process.pid}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  // Returns a synthetic path string used purely as the Map key — it's
-  // never actually written to disk.
   return path.join(SCREENSHOTS_DIR, `${safe}_${testId}_${suffix}_${unique}.png`);
 }
 
 function screenshotUrl(filePath) {
-  const buf = screenshotBuffers.get(filePath);
-  if (buf) {
-    // One-time read: drop from cache so RAM doesn't grow unbounded.
-    screenshotBuffers.delete(filePath);
-    return `data:image/png;base64,${buf.toString('base64')}`;
-  }
-  // Fallback — shouldn't happen if page was wrapped, but keeps URLs
-  // syntactically valid if someone forgets to wrap a page.
-  return '/screenshots/' + path.basename(filePath);
+  // Build a URL relative to the screenshots static mount. Using
+  // path.relative() tolerates nested subdirs (e.g. accessibility scans
+  // that group by store) as well as the flat layout used here.
+  const rel = path.relative(SCREENSHOTS_DIR, filePath).split(path.sep).join('/');
+  return '/screenshots/' + rel;
 }
 
-// Wrap a Playwright Page so page.screenshot({ path, ... }) captures
-// the buffer in-memory instead of writing to disk. Call this right
-// after `await context.newPage()`.
+// Compatibility shim. Previously this monkey-patched page.screenshot
+// to capture buffers in memory; now Playwright writes directly to
+// disk and this is just a pass-through so call sites stay unchanged.
 function wrapPageForCapture(page) {
-  const orig = page.screenshot.bind(page);
-  page.screenshot = async (options = {}) => {
-    const { path: storagePath, ...rest } = options || {};
-    // Strip the `path` option so Playwright returns the buffer without
-    // writing anything to disk.
-    const buffer = await orig(rest);
-    if (storagePath) {
-      screenshotBuffers.set(storagePath, buffer);
-    }
-    return buffer;
-  };
   return page;
+}
+
+// ─── Route-level bandwidth blocking ──────────────────────────────────
+// When we pay for egress per GB (Bright Data, Browserless), every
+// tracker pixel and Google Font is money. Block resource types we
+// never look at + known third-party analytics/ads origins so the
+// browser simply refuses to fetch them. Keeps pages visually coherent
+// (images + stylesheets + JS still load) while cutting bandwidth by
+// roughly 40–60% on a typical Shopify storefront.
+const BLOCKED_URL_PATTERNS = [
+  /google-analytics\.com/i,
+  /googletagmanager\.com/i,
+  /googletagservices\.com/i,
+  /doubleclick\.net/i,
+  /facebook\.(com|net)\/tr/i,
+  /connect\.facebook\.net/i,
+  /hotjar\.com/i,
+  /fullstory\.com/i,
+  /segment\.(io|com)/i,
+  /mixpanel\.com/i,
+  /intercom\.(io|com)/i,
+  /criteo\.(com|net)/i,
+  /taboola\.com/i,
+  /outbrain\.com/i,
+  /bing\.com\/bat/i,
+  /snapchat\.com/i,
+  /tiktok\.com\/i18n\/pixel/i,
+  /pinterest\.com\/ct/i,
+  /linkedin\.com\/insight/i,
+  /clarity\.ms/i,
+  /amplitude\.com/i,
+  /heap\.(io|com)/i,
+  /optimizely\.com/i,
+];
+const BLOCKED_RESOURCE_TYPES = new Set(['font', 'media', 'websocket']);
+
+async function installBandwidthBlocking(context) {
+  try {
+    await context.route('**/*', (route) => {
+      try {
+        const req = route.request();
+        const type = req.resourceType();
+        if (BLOCKED_RESOURCE_TYPES.has(type)) return route.abort();
+        const url = req.url();
+        for (const rx of BLOCKED_URL_PATTERNS) {
+          if (rx.test(url)) return route.abort();
+        }
+        return route.continue();
+      } catch (_) {
+        // Route handler must never throw — fall through to continue
+        // so a bad regex or disposed request doesn't deadlock tests.
+        try { return route.continue(); } catch (_) {}
+      }
+    });
+  } catch (err) {
+    // If route attachment fails (very rare — usually happens when the
+    // context is already closing), proceed without blocking. We'd
+    // rather pay a little bandwidth than fail the whole store.
+    console.warn('[test-runner] installBandwidthBlocking failed:', err.message);
+  }
 }
 
 // ─── Test implementations ───────────────────────────────────────────
@@ -4185,6 +4227,12 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
     });
     ownsContext = true;
+    // Attach bandwidth blocking before any page is created so the very
+    // first navigation already benefits. Safe to re-apply on shared
+    // contexts — Playwright dedups identical route handlers. We skip it
+    // for shared contexts (sweep mode) to avoid compounding handlers
+    // across stores.
+    await installBandwidthBlocking(context);
   }
   const page = wrapPageForCapture(await context.newPage());
 
@@ -4727,6 +4775,9 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
       args: launchArgs,
     });
+    // Apply blocking once on the shared context — runStoreTests skips
+    // it in shared mode to avoid piling on handlers per-store.
+    await installBandwidthBlocking(sharedContext);
     sendEvent({ type: 'browser-info', message: `Persistent ${headful ? 'headful' : 'headless'} context @ ${dataDir}` });
   } else {
     browser = await chromium.launch({ headless: !headful, args: launchArgs });

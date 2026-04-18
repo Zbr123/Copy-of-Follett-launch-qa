@@ -16,31 +16,67 @@ function screenshotPath(store, page, suffix) {
   return path.join(dir, `${page}_${suffix}_${unique}.png`);
 }
 
-// Memory-only screenshot capture (see test-runner.js for rationale).
-// Buffers are stashed by wrapPageForCapture and read back here as
-// base64 data URLs so the filesystem is never involved.
-const adaScreenshotBuffers = new Map();
-
+// Disk-backed screenshots with HTTP URLs. Same rationale as
+// test-runner.js — inlining base64 in events OOMs Redis at scale.
+// Files land under `$DATA_DIR/screenshots/<store>/accessibility/`,
+// which server.js serves at `/screenshots/*`.
 function screenshotUrl(filePath) {
-  const buf = adaScreenshotBuffers.get(filePath);
-  if (buf) {
-    adaScreenshotBuffers.delete(filePath);
-    return `data:image/png;base64,${buf.toString('base64')}`;
-  }
-  // Fallback preserves the original URL shape if an unwrapped page
-  // ever slips through — avoids crashes at the cost of a broken image.
-  return '/' + path.relative(path.join(__dirname), filePath).replace(/\\/g, '/');
+  const rel = path.relative(SCREENSHOTS_DIR, filePath).split(path.sep).join('/');
+  return '/screenshots/' + rel;
 }
 
+// Compatibility shim — Playwright writes directly to disk now.
 function wrapPageForCapture(page) {
-  const orig = page.screenshot.bind(page);
-  page.screenshot = async (options = {}) => {
-    const { path: storagePath, ...rest } = options || {};
-    const buffer = await orig(rest);
-    if (storagePath) adaScreenshotBuffers.set(storagePath, buffer);
-    return buffer;
-  };
   return page;
+}
+
+// Same bandwidth-blocking strategy as test-runner.js. For a11y scans
+// we're even more aggressive about blocking images is tempting, but
+// axe-core needs them loaded to check alt text / contrast, so we
+// leave images alone and only kill fonts/media/trackers.
+const ADA_BLOCKED_URL_PATTERNS = [
+  /google-analytics\.com/i,
+  /googletagmanager\.com/i,
+  /googletagservices\.com/i,
+  /doubleclick\.net/i,
+  /facebook\.(com|net)\/tr/i,
+  /connect\.facebook\.net/i,
+  /hotjar\.com/i,
+  /fullstory\.com/i,
+  /segment\.(io|com)/i,
+  /mixpanel\.com/i,
+  /intercom\.(io|com)/i,
+  /criteo\.(com|net)/i,
+  /taboola\.com/i,
+  /outbrain\.com/i,
+  /bing\.com\/bat/i,
+  /snapchat\.com/i,
+  /tiktok\.com\/i18n\/pixel/i,
+  /pinterest\.com\/ct/i,
+  /linkedin\.com\/insight/i,
+  /clarity\.ms/i,
+];
+const ADA_BLOCKED_RESOURCE_TYPES = new Set(['font', 'media', 'websocket']);
+
+async function installBandwidthBlocking(context) {
+  try {
+    await context.route('**/*', (route) => {
+      try {
+        const req = route.request();
+        const type = req.resourceType();
+        if (ADA_BLOCKED_RESOURCE_TYPES.has(type)) return route.abort();
+        const url = req.url();
+        for (const rx of ADA_BLOCKED_URL_PATTERNS) {
+          if (rx.test(url)) return route.abort();
+        }
+        return route.continue();
+      } catch (_) {
+        try { return route.continue(); } catch (_) {}
+      }
+    });
+  } catch (err) {
+    console.warn('[ada-scanner] installBandwidthBlocking failed:', err.message);
+  }
 }
 
 function storeOrigin(url) {
@@ -124,6 +160,7 @@ async function scanStore(browser, store, sendEvent) {
     deviceScaleFactor: 2,
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   });
+  await installBandwidthBlocking(context);
   const page = wrapPageForCapture(await context.newPage());
 
   // Login if needed

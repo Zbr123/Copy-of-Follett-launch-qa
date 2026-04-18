@@ -826,7 +826,7 @@ app.get('/api/runs/:id/pdf', async (req, res) => {
     for (const s of (r.screenshots || [])) {
       if (s.src && !screenshotCache[s.src]) {
         try {
-          const filePath = path.join(__dirname, s.src.replace(/^\//, ''));
+          const filePath = path.join(DATA_DIR, s.src.replace(/^\//, ''));
           if (fs.existsSync(filePath)) {
             const buf = fs.readFileSync(filePath);
             screenshotCache[s.src] = `data:image/png;base64,${buf.toString('base64')}`;
@@ -953,7 +953,7 @@ app.post('/api/generate-pdf', async (req, res) => {
     for (const s of (r.screenshots || [])) {
       if (s.src && !screenshotCache[s.src]) {
         try {
-          const filePath = path.join(__dirname, s.src.replace(/^\//, ''));
+          const filePath = path.join(DATA_DIR, s.src.replace(/^\//, ''));
           if (fs.existsSync(filePath)) {
             const buf = fs.readFileSync(filePath);
             screenshotCache[s.src] = `data:image/png;base64,${buf.toString('base64')}`;
@@ -1417,7 +1417,7 @@ app.get('/api/sweeps/:id/pdf', async (req, res) => {
       for (const s of (r.screenshots || [])) {
         if (s.src && !screenshotCache[s.src]) {
           try {
-            const filePath = path.join(__dirname, s.src.replace(/^\//, ''));
+            const filePath = path.join(DATA_DIR, s.src.replace(/^\//, ''));
             if (fs.existsSync(filePath)) {
               const buf = fs.readFileSync(filePath);
               screenshotCache[s.src] = `data:image/png;base64,${buf.toString('base64')}`;
