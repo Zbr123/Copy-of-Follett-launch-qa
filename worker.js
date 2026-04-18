@@ -101,7 +101,21 @@ let adaScanBrowser = null;
 //   wss://production-sfo.browserless.io?token=XXX&stealth&blockAds
 //   wss://production-sfo.browserless.io?token=XXX&stealth&proxy=residential
 //   wss://USER:PASS@brd.superproxy.io:9222  (Bright Data)
-const BROWSER_WS_URL = process.env.BROWSER_WS_URL || '';
+// Browserless defaults each session to a 60s timeout unless the caller
+// passes `?timeout=<ms>`. A 60s ceiling kills every real test mid-flight
+// (we saw this in prod — "Target page, context or browser has been
+// closed" immediately after 00:60.000 elapsed). Inject a 10-minute
+// session cap if the user didn't supply one, so each per-job connection
+// has plenty of headroom for a slow store.
+function withBrowserlessTimeout(raw) {
+  if (!raw) return raw;
+  if (!/browserless\.io/i.test(raw)) return raw; // other providers — leave alone
+  if (/[?&]timeout=/i.test(raw)) return raw;     // user already set one
+  const sep = raw.includes('?') ? '&' : '?';
+  return `${raw}${sep}timeout=600000`;
+}
+
+const BROWSER_WS_URL = withBrowserlessTimeout(process.env.BROWSER_WS_URL || '');
 const USE_REMOTE_BROWSER = Boolean(BROWSER_WS_URL);
 
 if (USE_REMOTE_BROWSER) {
@@ -109,35 +123,40 @@ if (USE_REMOTE_BROWSER) {
   const sanitized = BROWSER_WS_URL.replace(/token=[^&]+/i, 'token=***')
                                   .replace(/\/\/[^@]+@/, '//***:***@');
   console.log(`[worker] browser mode: remote CDP → ${sanitized}`);
+  console.log('[worker] remote mode: fresh browser connection per job (avoids session timeout)');
 } else {
   console.log('[worker] browser mode: local launch (playwright-extra + stealth)');
 }
 
+// Remote mode: connect fresh per job. Browserless (and similar CDP
+// providers) enforce a per-session timeout — reusing one connection
+// across a multi-hour run is not viable. Local mode: keep the cached
+// shared browser (launch is expensive, and there's no session cap).
 async function getStoreTestBrowser() {
-  if (storeTestBrowser && storeTestBrowser.isConnected()) return storeTestBrowser;
   if (USE_REMOTE_BROWSER) {
     console.log('[worker] connecting store-test browser to remote CDP...');
     // Use vanilla playwright — the stealth plugin patches launch args,
     // which don't apply to an already-running remote browser. Stealth
     // is handled server-side by the remote provider.
-    storeTestBrowser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
-  } else {
-    console.log('[worker] launching store-test browser (playwright-extra + stealth)...');
-    storeTestBrowser = await chromiumExtra.launch({
-      headless: true,
-      args: [
-        '--disable-blink-features=AutomationControlled',
-        '--no-sandbox',
-        '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process',
-        '--disable-setuid-sandbox',
-        '--window-size=1920,1080',
-      ],
+    const browser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
+    browser.on('disconnected', () => {
+      console.warn('[worker] store-test browser disconnected (remote per-job session ended)');
     });
+    return browser;
   }
-  // If the remote (or local) browser disconnects unexpectedly, clear the
-  // cached handle so the next job triggers a fresh connect/launch
-  // instead of reusing a dead reference.
+  if (storeTestBrowser && storeTestBrowser.isConnected()) return storeTestBrowser;
+  console.log('[worker] launching store-test browser (playwright-extra + stealth)...');
+  storeTestBrowser = await chromiumExtra.launch({
+    headless: true,
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-setuid-sandbox',
+      '--window-size=1920,1080',
+    ],
+  });
   storeTestBrowser.on('disconnected', () => {
     console.warn('[worker] store-test browser disconnected');
     storeTestBrowser = null;
@@ -146,14 +165,17 @@ async function getStoreTestBrowser() {
 }
 
 async function getAdaScanBrowser() {
-  if (adaScanBrowser && adaScanBrowser.isConnected()) return adaScanBrowser;
   if (USE_REMOTE_BROWSER) {
     console.log('[worker] connecting ada-scan browser to remote CDP...');
-    adaScanBrowser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
-  } else {
-    console.log('[worker] launching ada-scan browser...');
-    adaScanBrowser = await chromiumVanilla.launch({ headless: true });
+    const browser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
+    browser.on('disconnected', () => {
+      console.warn('[worker] ada-scan browser disconnected (remote per-job session ended)');
+    });
+    return browser;
   }
+  if (adaScanBrowser && adaScanBrowser.isConnected()) return adaScanBrowser;
+  console.log('[worker] launching ada-scan browser...');
+  adaScanBrowser = await chromiumVanilla.launch({ headless: true });
   adaScanBrowser.on('disconnected', () => {
     console.warn('[worker] ada-scan browser disconnected');
     adaScanBrowser = null;
@@ -185,8 +207,9 @@ const storeTestWorker = new Worker(
       });
     };
 
+    let browser = null;
     try {
-      const browser = await getStoreTestBrowser();
+      browser = await getStoreTestBrowser();
       // No hard per-store ceiling. Slow stores (rural bandwidth, heavy
       // themes, etc.) need to be allowed to finish. The real defense
       // against runaway hangs is in test-runner.js: the patched
@@ -207,6 +230,13 @@ const storeTestWorker = new Worker(
       await incrementRunCounter(runId, 'failed');
       await finalizeRunIfDone(runId);
       throw err; // let BullMQ mark the job as failed
+    } finally {
+      // Per-job remote sessions must be closed so Browserless releases
+      // the slot (plans are billed on concurrent sessions). Local mode
+      // keeps the cached shared browser alive — don't touch it here.
+      if (USE_REMOTE_BROWSER && browser) {
+        try { await browser.close(); } catch (_) {}
+      }
     }
   },
   {
@@ -245,8 +275,9 @@ const adaScanWorker = new Worker(
       });
     };
 
+    let browser = null;
     try {
-      const browser = await getAdaScanBrowser();
+      browser = await getAdaScanBrowser();
       await scanStore(browser, store, sendEvent);
       await eventChain;
       await incrementRunCounter(runId, 'completed');
@@ -259,6 +290,10 @@ const adaScanWorker = new Worker(
       await incrementRunCounter(runId, 'failed');
       await finalizeRunIfDone(runId);
       throw err;
+    } finally {
+      if (USE_REMOTE_BROWSER && browser) {
+        try { await browser.close(); } catch (_) {}
+      }
     }
   },
   {
