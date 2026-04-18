@@ -4231,7 +4231,8 @@ async function testPriceFloorScan(page, store, emit) {
 // ─── Run a single store (all its tests) ─────────────────────────────
 
 async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {}) {
-  sendEvent({ type: 'store-start', store: store.newStore });
+  const storeStartedAt = Date.now();
+  sendEvent({ type: 'store-start', store: store.newStore, startedAt: new Date(storeStartedAt).toISOString() });
 
   // Two modes:
   //   - Ephemeral: given a Browser, create a fresh context per store
@@ -4328,12 +4329,27 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     // Ensure login happens before other tests
     if (!loginDone && testId !== 'storefront-login') {
       const loginTest = TEST_REGISTRY['storefront-login'];
-      sendEvent({ type: 'test-start', store: store.newStore, testId: 'storefront-login', testName: loginTest.name });
+      const loginStartedAt = Date.now();
+      sendEvent({
+        type: 'test-start',
+        store: store.newStore,
+        testId: 'storefront-login',
+        testName: loginTest.name,
+        startedAt: new Date(loginStartedAt).toISOString(),
+      });
       try {
         const loginResult = await loginTest.run(page, store, (data) =>
           sendEvent({ type: 'test-progress', store: store.newStore, testId: 'storefront-login', ...data })
         );
-        sendEvent({ type: 'test-result', store: store.newStore, testId: 'storefront-login', ...loginResult });
+        const loginDurationMs = Date.now() - loginStartedAt;
+        sendEvent({
+          type: 'test-result',
+          store: store.newStore,
+          testId: 'storefront-login',
+          durationMs: loginDurationMs,
+          durationSec: Number((loginDurationMs / 1000).toFixed(1)),
+          ...loginResult,
+        });
         loginDone = true;
         if (!loginResult.passed) {
           // Skip all remaining tests for this store
@@ -4350,10 +4366,13 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
           break;
         }
       } catch (err) {
+        const loginDurationMs = Date.now() - loginStartedAt;
         sendEvent({
           type: 'test-result',
           store: store.newStore,
           testId: 'storefront-login',
+          durationMs: loginDurationMs,
+          durationSec: Number((loginDurationMs / 1000).toFixed(1)),
           passed: false,
           message: `Login error: ${err.message}`,
         });
@@ -4373,7 +4392,14 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
 
     if (testId === 'storefront-login' && loginDone) continue;
 
-    sendEvent({ type: 'test-start', store: store.newStore, testId, testName: test.name });
+    const testStartedAt = Date.now();
+    sendEvent({
+      type: 'test-start',
+      store: store.newStore,
+      testId,
+      testName: test.name,
+      startedAt: new Date(testStartedAt).toISOString(),
+    });
 
     // Run test with 1 retry on failure
     let result;
@@ -4400,7 +4426,15 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
         }
       }
 
-      sendEvent({ type: 'test-result', store: store.newStore, testId, ...result });
+      const durationMs = Date.now() - testStartedAt;
+      sendEvent({
+        type: 'test-result',
+        store: store.newStore,
+        testId,
+        durationMs,
+        durationSec: Number((durationMs / 1000).toFixed(1)),
+        ...result,
+      });
       if (testId === 'storefront-login') loginDone = true;
     } catch (err) {
       // First attempt threw — retry once
@@ -4412,7 +4446,15 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
         if (result.passed) {
           result.message = `[Passed on retry] ${result.message}`;
         }
-        sendEvent({ type: 'test-result', store: store.newStore, testId, ...result });
+        const durationMs = Date.now() - testStartedAt;
+        sendEvent({
+          type: 'test-result',
+          store: store.newStore,
+          testId,
+          durationMs,
+          durationSec: Number((durationMs / 1000).toFixed(1)),
+          ...result,
+        });
       } catch (retryErr) {
         const errShot = screenshotPath(store.newStore, testId, 'error');
         try {
@@ -4429,6 +4471,8 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
           type: 'test-result',
           store: store.newStore,
           testId,
+          durationMs: Date.now() - testStartedAt,
+          durationSec: Number(((Date.now() - testStartedAt) / 1000).toFixed(1)),
           passed: false,
           message: `Error: ${retryErr.message}`,
         });
@@ -4445,7 +4489,13 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
       try { await page.close(); } catch (_) {}
     }
   }
-  sendEvent({ type: 'store-complete', store: store.newStore });
+  const storeDurationMs = Date.now() - storeStartedAt;
+  sendEvent({
+    type: 'store-complete',
+    store: store.newStore,
+    durationMs: storeDurationMs,
+    durationSec: Number((storeDurationMs / 1000).toFixed(1)),
+  });
 }
 
 // ─── Inventory test ─────────────────────────────────────────────────
