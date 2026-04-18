@@ -4711,7 +4711,10 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
   let sharedContext = null;
 
   if (options.endpoint) {
-    browser = await chromium.connect(options.endpoint);
+    // CDP connection (Browserless, Bright Data Scraping Browser, etc.)
+    // — same protocol the worker uses, so a single BROWSER_WS_URL env
+    // var works for both code paths.
+    browser = await chromium.connectOverCDP(options.endpoint);
     sendEvent({ type: 'browser-info', message: `Connected to remote browser: ${options.endpoint.replace(/\?.*$/, '')}` });
   } else if (options.persistent) {
     const dataDir = options.userDataDir || path.join(DATA_DIR, '.browser-data');

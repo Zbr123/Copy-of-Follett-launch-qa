@@ -87,27 +87,77 @@ console.log('[worker] screenshots: in-memory data URLs (no disk)');
 let storeTestBrowser = null;
 let adaScanBrowser = null;
 
+// When BROWSER_WS_URL is set (e.g. Browserless, Bright Data Scraping
+// Browser, or any CDP-compatible remote Chromium), we connect to a
+// managed browser pool instead of launching locally. The remote service
+// handles stealth + residential-IP rotation server-side, which is the
+// only reliable way to get past Shopify's Cloudflare at scale from a
+// single datacenter egress IP.
+//
+// Leave BROWSER_WS_URL unset (or empty) for local development — the
+// worker falls back to launching headless Chromium in-process.
+//
+// Typical values:
+//   wss://production-sfo.browserless.io?token=XXX&stealth&blockAds
+//   wss://production-sfo.browserless.io?token=XXX&stealth&proxy=residential
+//   wss://USER:PASS@brd.superproxy.io:9222  (Bright Data)
+const BROWSER_WS_URL = process.env.BROWSER_WS_URL || '';
+const USE_REMOTE_BROWSER = Boolean(BROWSER_WS_URL);
+
+if (USE_REMOTE_BROWSER) {
+  // Don't leak the token into logs.
+  const sanitized = BROWSER_WS_URL.replace(/token=[^&]+/i, 'token=***')
+                                  .replace(/\/\/[^@]+@/, '//***:***@');
+  console.log(`[worker] browser mode: remote CDP → ${sanitized}`);
+} else {
+  console.log('[worker] browser mode: local launch (playwright-extra + stealth)');
+}
+
 async function getStoreTestBrowser() {
   if (storeTestBrowser && storeTestBrowser.isConnected()) return storeTestBrowser;
-  console.log('[worker] launching store-test browser (playwright-extra + stealth)...');
-  storeTestBrowser = await chromiumExtra.launch({
-    headless: true,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--no-sandbox',
-      '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--disable-setuid-sandbox',
-      '--window-size=1920,1080',
-    ],
+  if (USE_REMOTE_BROWSER) {
+    console.log('[worker] connecting store-test browser to remote CDP...');
+    // Use vanilla playwright — the stealth plugin patches launch args,
+    // which don't apply to an already-running remote browser. Stealth
+    // is handled server-side by the remote provider.
+    storeTestBrowser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
+  } else {
+    console.log('[worker] launching store-test browser (playwright-extra + stealth)...');
+    storeTestBrowser = await chromiumExtra.launch({
+      headless: true,
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--no-sandbox',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-setuid-sandbox',
+        '--window-size=1920,1080',
+      ],
+    });
+  }
+  // If the remote (or local) browser disconnects unexpectedly, clear the
+  // cached handle so the next job triggers a fresh connect/launch
+  // instead of reusing a dead reference.
+  storeTestBrowser.on('disconnected', () => {
+    console.warn('[worker] store-test browser disconnected');
+    storeTestBrowser = null;
   });
   return storeTestBrowser;
 }
 
 async function getAdaScanBrowser() {
   if (adaScanBrowser && adaScanBrowser.isConnected()) return adaScanBrowser;
-  console.log('[worker] launching ada-scan browser...');
-  adaScanBrowser = await chromiumVanilla.launch({ headless: true });
+  if (USE_REMOTE_BROWSER) {
+    console.log('[worker] connecting ada-scan browser to remote CDP...');
+    adaScanBrowser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
+  } else {
+    console.log('[worker] launching ada-scan browser...');
+    adaScanBrowser = await chromiumVanilla.launch({ headless: true });
+  }
+  adaScanBrowser.on('disconnected', () => {
+    console.warn('[worker] ada-scan browser disconnected');
+    adaScanBrowser = null;
+  });
   return adaScanBrowser;
 }
 
@@ -137,20 +187,13 @@ const storeTestWorker = new Worker(
 
     try {
       const browser = await getStoreTestBrowser();
-      // Hard per-store ceiling. If a store can't finish in 10 minutes
-      // (usually because of Cloudflare lock-outs), we abort and let the
-      // rest of the queue keep moving. Without this cap a single bad
-      // store can monopolize a worker slot indefinitely.
-      const STORE_TIMEOUT_MS = 10 * 60 * 1000;
-      await Promise.race([
-        runStoreTests(browser, store, testIds, sendEvent),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`store timeout after ${STORE_TIMEOUT_MS / 1000}s`)),
-            STORE_TIMEOUT_MS
-          )
-        ),
-      ]);
+      // No hard per-store ceiling. Slow stores (rural bandwidth, heavy
+      // themes, etc.) need to be allowed to finish. The real defense
+      // against runaway hangs is in test-runner.js: the patched
+      // page.goto throws on unresolvable Cloudflare challenges, so a
+      // blocked store fails fast (~30-60s) instead of grinding on
+      // nonexistent selectors for hours.
+      await runStoreTests(browser, store, testIds, sendEvent);
       // Drain the event chain so screenshots + publishes finish before
       // we mark the job complete.
       await eventChain;

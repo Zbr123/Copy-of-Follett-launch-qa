@@ -689,7 +689,12 @@ app.post('/api/schedule-run', (req, res) => {
     };
 
     try {
-      await runTests(stores, tests, sendEvent, { concurrency: entry.concurrency });
+      // Route through Browserless/remote CDP if configured, same as the
+      // worker process. Keeps scheduled runs from hitting Cloudflare
+      // from the datacenter IP.
+      const runOpts = { concurrency: entry.concurrency };
+      if (process.env.BROWSER_WS_URL) runOpts.endpoint = process.env.BROWSER_WS_URL;
+      await runTests(stores, tests, sendEvent, runOpts);
       runData.status = 'complete';
       runData.completedAt = new Date().toISOString();
       entry.status = 'complete';
@@ -725,7 +730,12 @@ app.post('/api/validate-stores', async (req, res) => {
   if (!stores || !stores.length) return res.status(400).json({ error: 'No stores' });
 
   const results = [];
-  const browser = await chromium.launch({ headless: true });
+  // Route validation through the same remote browser the workers use
+  // when configured — otherwise validate-stores hits Cloudflare from
+  // the datacenter IP and reports spurious failures.
+  const browser = process.env.BROWSER_WS_URL
+    ? await chromium.connectOverCDP(process.env.BROWSER_WS_URL)
+    : await chromium.launch({ headless: true });
 
   for (const store of stores) {
     const result = { store: store.newStore, reachable: false, passwordWorks: null, error: null };
