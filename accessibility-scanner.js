@@ -75,7 +75,7 @@ async function installBandwidthBlocking(context) {
   // Skip in remote-CDP mode — see the matching rationale in
   // test-runner.js. Route interception round-trips add too much
   // latency on top of residential proxies and blow page.goto timeouts.
-  if (process.env.BROWSER_WS_URL) return;
+  if (process.env.REMOTE_BROWSER_ENABLED === '1' && process.env.BROWSER_WS_URL) return;
   try {
     await context.route('**/*', (route) => {
       try {

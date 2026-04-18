@@ -29,6 +29,7 @@ function safeJobId(...parts) {
 
 const app = express();
 const PORT = process.env.PORT || 3847;
+const REMOTE_BROWSER_ENABLED = process.env.REMOTE_BROWSER_ENABLED === '1';
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -693,7 +694,9 @@ app.post('/api/schedule-run', (req, res) => {
       // worker process. Keeps scheduled runs from hitting Cloudflare
       // from the datacenter IP.
       const runOpts = { concurrency: entry.concurrency };
-      if (process.env.BROWSER_WS_URL) runOpts.endpoint = process.env.BROWSER_WS_URL;
+      if (REMOTE_BROWSER_ENABLED && process.env.BROWSER_WS_URL) {
+        runOpts.endpoint = process.env.BROWSER_WS_URL;
+      }
       await runTests(stores, tests, sendEvent, runOpts);
       runData.status = 'complete';
       runData.completedAt = new Date().toISOString();
@@ -733,7 +736,7 @@ app.post('/api/validate-stores', async (req, res) => {
   // Route validation through the same remote browser the workers use
   // when configured — otherwise validate-stores hits Cloudflare from
   // the datacenter IP and reports spurious failures.
-  const browser = process.env.BROWSER_WS_URL
+  const browser = REMOTE_BROWSER_ENABLED && process.env.BROWSER_WS_URL
     ? await chromium.connectOverCDP(process.env.BROWSER_WS_URL)
     : await chromium.launch({ headless: true });
 

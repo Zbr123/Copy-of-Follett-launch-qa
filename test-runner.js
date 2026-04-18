@@ -285,7 +285,7 @@ async function installBandwidthBlocking(context) {
   // can push past page.goto's 10-20s timeouts just in routing
   // overhead. Skip client-side blocking in remote mode — we'll add
   // browser-side `Network.setBlockedURLs` as a follow-up.
-  if (process.env.BROWSER_WS_URL) return;
+  if (process.env.REMOTE_BROWSER_ENABLED === '1' && process.env.BROWSER_WS_URL) return;
   try {
     await context.route('**/*', (route) => {
       try {

@@ -118,8 +118,9 @@ function withBrowserlessTimeout(raw) {
   return `${raw}${sep}timeout=60000`;
 }
 
+const REMOTE_BROWSER_ENABLED = process.env.REMOTE_BROWSER_ENABLED === '1';
 const BROWSER_WS_URL = withBrowserlessTimeout(process.env.BROWSER_WS_URL || '');
-const USE_REMOTE_BROWSER = Boolean(BROWSER_WS_URL);
+const USE_REMOTE_BROWSER = REMOTE_BROWSER_ENABLED && Boolean(BROWSER_WS_URL);
 
 if (USE_REMOTE_BROWSER) {
   // Don't leak the token into logs.
@@ -129,6 +130,9 @@ if (USE_REMOTE_BROWSER) {
   console.log('[worker] remote mode: fresh browser connection per job (avoids session timeout)');
 } else {
   console.log('[worker] browser mode: local launch (playwright-extra + stealth)');
+  if (BROWSER_WS_URL && !REMOTE_BROWSER_ENABLED) {
+    console.log('[worker] remote browser URL present but ignored because REMOTE_BROWSER_ENABLED is not set to 1');
+  }
 }
 
 // Remote mode: connect fresh per job. Browserless (and similar CDP
