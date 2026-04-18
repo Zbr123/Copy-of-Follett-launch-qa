@@ -154,6 +154,8 @@ app.post('/api/run-tests', async (req, res) => {
         testId: data.testId,
         passed: data.passed,
         message: data.message,
+        durationMs: data.durationMs || null,
+        durationSec: data.durationSec || null,
         checks: data.checks || [],
         screenshots: screenshotTracker[key] || [],
         timestamp: new Date().toISOString(),
@@ -682,6 +684,8 @@ app.post('/api/schedule-run', (req, res) => {
         runData.results.push({
           store: data.store, testId: data.testId,
           passed: data.passed, message: data.message,
+          durationMs: data.durationMs || null,
+          durationSec: data.durationSec || null,
           checks: data.checks || [],
           timestamp: new Date().toISOString(),
         });

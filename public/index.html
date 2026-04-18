@@ -1568,6 +1568,7 @@
           <div class="tr-dot running"></div>
           <div class="tr-name">${testName || testId}</div>
           <span class="tr-badge running">Running</span>
+          <span class="tr-duration"></span>
           <span class="tr-chevron">&#9654;</span>
         </div>
         <div class="tr-detail">
@@ -1580,6 +1581,7 @@
         el: row,
         dot: row.querySelector('.tr-dot'),
         badge: row.querySelector('.tr-badge'),
+        durationEl: row.querySelector('.tr-duration'),
         stepsEl: row.querySelector('.tr-steps'),
         msgEl: row.querySelector('.tr-message'),
         screenshotsEl: row.querySelector('.tr-screenshots'),
@@ -1692,7 +1694,8 @@
                 tr.dot.className = 'tr-dot ' + s;
                 tr.badge.className = 'tr-badge ' + s;
                 tr.badge.textContent = data.passed ? 'Passed' : 'Failed';
-                tr.msgEl.textContent = data.message;
+                tr.durationEl.textContent = data.durationSec != null ? `${data.durationSec}s` : '';
+                tr.msgEl.textContent = data.durationSec != null ? `[${data.durationSec}s] ${data.message}` : data.message;
                 if (!data.passed) tr.el.classList.add('expanded');
                 totalTests++;
                 if (data.passed) { passedTests++; resultState[data.store].passCount++; }
@@ -1702,6 +1705,8 @@
                   store: data.store, testId: data.testId,
                   testName: TESTS.find(t => t.id === data.testId)?.name || data.testId,
                   passed: data.passed, message: data.message,
+                  durationMs: data.durationMs || null,
+                  durationSec: data.durationSec || null,
                   steps: tr.steps.slice(), screenshots: tr.screenshots.slice(),
                   checks: data.checks || [],
                 });
@@ -1710,9 +1715,11 @@
               case 'store-complete': {
                 const sr = resultState[data.store];
                 if (sr) {
+                  sr.meta.textContent = data.durationSec != null
+                    ? `${sr.passCount} passed, ${sr.failCount} failed in ${data.durationSec}s`
+                    : `${sr.passCount} passed, ${sr.failCount} failed`;
                   const hasFails = sr.failCount > 0;
                   sr.statusDot.className = 'result-status ' + (hasFails ? 'fail' : 'pass');
-                  sr.meta.textContent = `${sr.passCount} passed, ${sr.failCount} failed`;
                 }
                 break;
               }
