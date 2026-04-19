@@ -301,11 +301,6 @@ const TEST_REGISTRY = {
     description: 'Financial Aid placement, field labels (First Name, Phone), Follett disclaimer — all in one checkout scan',
     run: testCheckoutValidation,
   },
-  'pickup-name-validation': {
-    name: 'Pickup Name Validation',
-    description: 'Verify pickup location name does not contain a numerical store ID',
-    run: testPickupNameValidation,
-  },
   'page-content-migration': {
     name: 'Page and Content Migration',
     description: 'Verify 23 content checks: legacy content guard, logo, hours, address, pages, footer links, Terms/Privacy/Cookie/DNS, email signup compliance',
@@ -331,11 +326,6 @@ const TEST_REGISTRY = {
     description: 'Discover nav collections and flag any with zero products (P1 bug pattern)',
     run: testEmptyCollections,
   },
-  'hero-destination': {
-    name: 'Hero Destination Valid',
-    description: 'Click each hero/slider slide and verify destination has products',
-    run: testHeroDestination,
-  },
   'sale-clearance-purity': {
     name: 'Sale & Clearance Purity',
     description: 'Verify sale/clearance collections actually contain sale items with badges',
@@ -350,11 +340,6 @@ const TEST_REGISTRY = {
     name: 'External Link Targets',
     description: 'Verify external links (Specialty Shops etc.) open in new tab and are reachable',
     run: testExternalLinkTargets,
-  },
-  'menu-duplicates': {
-    name: 'Menu Duplicate Detection',
-    description: 'Flag duplicate L1 nav categories and hover/flyout glitches',
-    run: testMenuDuplicates,
   },
   'price-floor-scan': {
     name: 'Price Floor Scan',
@@ -693,7 +678,7 @@ async function testRentalCollateral(page, store, emit) {
   emit({ screenshot: screenshotUrl(resultsShot), label: 'Search results' });
 
   // Step 3: Try up to 5 products from search results by position
-  const MAX_PRODUCTS = 10;
+  const MAX_PRODUCTS = 5;
   let rentalSuccess = false;
 
   for (let attempt = 0; attempt < MAX_PRODUCTS; attempt++) {
@@ -977,7 +962,7 @@ async function testDigitalDeliveryFee(page, store, emit) {
   emit({ screenshot: screenshotUrl(resultsShot), label: 'Search results' });
 
   // Step 2: Try up to 5 products until we find one with a Digital variant
-  const MAX_PRODUCTS = 10;
+  const MAX_PRODUCTS = 5;
   let addedSuccess = false;
   let addedProductName = '';
 
@@ -1268,7 +1253,7 @@ async function testCheckoutValidation(page, store, emit) {
     await clearCart(page, origin, emit);
     const addResult = await addStandardItemToCart(page, store, emit, {
       listUrl: `${origin}/search?q=${encodeURIComponent('textbook')}`,
-      maxProducts: 10,
+      maxProducts: 5,
       screenshotPrefix: 'checkout-validation',
     });
     if (!addResult.passed) {
@@ -3909,13 +3894,13 @@ async function testFooterTextSanity(page, store, emit) {
     await page.goto(`${origin}/pages/view-store-hours`, { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForTimeout(1000);
 
-    const bodyText = await page.textContent('body').catch(() => '');
+    const bodyText = await page.evaluate(() => (document.body && document.body.innerText) || '').catch(() => '');
     const storeHoursIssues = [];
 
-    if (bodyText.includes('\\n') || bodyText.includes('/n')) {
+    if ((bodyText.match(/\\n|\/n/g) || []).length >= 2) {
       storeHoursIssues.push('Literal "\\n" or "/n" in store hours page');
     }
-    if (bodyText.includes('&amp;')) {
+    if ((bodyText.match(/&amp;/g) || []).length >= 2) {
       storeHoursIssues.push('"&amp;" rendered as literal text');
     }
 

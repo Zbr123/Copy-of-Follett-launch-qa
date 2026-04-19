@@ -5,14 +5,12 @@ const { runTests } = require('./test-runner');
 const { runAccessibilityScan } = require('./accessibility-scanner');
 const { chromium } = require('playwright');
 const sweepWorker = require('./sweep-worker');
-const {
-  storeTestQueue,
-  adaScanQueue,
-  subscribeToRun,
-  initRunStatus,
-  getRunStatus,
-  isRunFinished,
-} = require('./lib/queue');
+
+let queueApi = null;
+function getQueueApi() {
+  if (!queueApi) queueApi = require('./lib/queue');
+  return queueApi;
+}
 
 // BullMQ reserves `:` in custom job IDs for its internal Redis key
 // scheme. Store URLs like "https://bkstr-0300.myshopify.com" contain
@@ -146,8 +144,8 @@ app.post('/api/run-tests', async (req, res) => {
 });
 
 // ── Accessibility scan SSE endpoint ──
-// Same queue-based pattern as /api/run-tests: enqueue one ada-scan job
-// per store, subscribe to Redis, forward events to SSE.
+// Use the same direct-run model as /api/run-tests so local packaged
+// launches do not depend on Redis/workers just to run an accessibility scan.
 app.post('/api/accessibility-scan', async (req, res) => {
   const { stores } = req.body;
   if (!stores || !stores.length) return res.status(400).json({ error: 'No stores provided' });
@@ -161,52 +159,18 @@ app.post('/api/accessibility-scan', async (req, res) => {
 
   const runId = `ada-${new Date().toISOString().replace(/[:.]/g, '-')}`;
 
-  const handleEvent = (data) => {
+  const sendEvent = (data) => {
     try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch (_) {}
   };
 
-  let unsubscribe = null;
-  let finished = false;
-  req.on('close', () => {
-    if (unsubscribe) { unsubscribe().catch(() => {}); unsubscribe = null; }
-  });
-
   try {
-    await initRunStatus(runId, stores.length);
-    unsubscribe = await subscribeToRun(runId, handleEvent);
-
-    const queue = adaScanQueue();
-    await Promise.all(
-      stores.map((store, idx) =>
-        queue.add(
-          'ada-scan',
-          { runId, store },
-          {
-            jobId: safeJobId(runId, idx, store.newStore),
-            priority: idx + 1, // fair-share across concurrent scans
-          }
-        )
-      )
-    );
-
-    await new Promise((resolve) => {
-      const interval = setInterval(async () => {
-        if (finished) return;
-        const status = await getRunStatus(runId).catch(() => null);
-        if (status && (status.completed + status.failed) >= status.total) {
-          finished = true;
-          clearInterval(interval);
-          resolve();
-        }
-      }, 1000);
-    });
-
-    handleEvent({ type: 'ada-complete' });
+    sendEvent({ type: 'ada-run-start', runId, totalStores: stores.length });
+    await runAccessibilityScan(stores, sendEvent);
+    sendEvent({ type: 'ada-complete' });
   } catch (err) {
     console.error('[api/accessibility-scan] error:', err);
     try { res.write(`data: ${JSON.stringify({ type: 'ada-error', message: err.message })}\n\n`); } catch (_) {}
   } finally {
-    if (unsubscribe) { unsubscribe().catch(() => {}); unsubscribe = null; }
     try { res.end(); } catch (_) {}
   }
 });
@@ -223,8 +187,6 @@ app.post('/api/accessibility-scan', async (req, res) => {
 // Point a dashboard (or just curl) at them when the system feels slow.
 
 app.get('/api/health', async (req, res) => {
-  const { sharedRedis } = require('./lib/queue');
-
   // Every Redis-touching call is wrapped in Promise.race against a 3s
   // timeout so the health endpoint can't hang, even if the BullMQ
   // client is configured for infinite retries.
@@ -245,6 +207,7 @@ app.get('/api/health', async (req, res) => {
   };
 
   try {
+    const { sharedRedis } = getQueueApi();
     const pong = await withTimeout(sharedRedis().ping(), 3000, 'redis ping');
     health.redis = pong === 'PONG' ? 'ok' : 'degraded';
   } catch (err) {
@@ -253,6 +216,7 @@ app.get('/api/health', async (req, res) => {
   }
 
   try {
+    const { storeTestQueue } = getQueueApi();
     const q = storeTestQueue();
     const workers = await withTimeout(q.getWorkers(), 3000, 'getWorkers');
     health.workers = workers.length;
@@ -274,6 +238,7 @@ app.get('/api/queue/stats', async (req, res) => {
       ),
     ]);
   try {
+    const { storeTestQueue, adaScanQueue } = getQueueApi();
     const storeQ = storeTestQueue();
     const adaQ = adaScanQueue();
     const [storeCounts, adaCounts, storeWorkers, adaWorkers] = await withTimeout(
@@ -1460,7 +1425,10 @@ async function reconcileOrphanedRuns() {
     try { runData = JSON.parse(fs.readFileSync(runFile, 'utf8')); } catch (_) { continue; }
     if (runData.status !== 'running') continue;
     let done = false;
-    try { done = await isRunFinished(runData.id); } catch (_) {}
+    try {
+      const { isRunFinished } = getQueueApi();
+      done = await isRunFinished(runData.id);
+    } catch (_) {}
     if (!done) continue;
     runData.status = 'complete';
     runData.completedAt = runData.completedAt || new Date().toISOString();
