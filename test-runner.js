@@ -4260,23 +4260,43 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     await installBandwidthBlocking(context);
   }
   const page = wrapPageForCapture(await context.newPage());
+  let activeTestId = '';
+  let activeTestName = '';
+
+  const emitActiveProgress = (step, extra = {}) => {
+    sendEvent({
+      type: 'test-progress',
+      store: store.newStore,
+      testId: activeTestId,
+      testName: activeTestName,
+      step,
+      ...extra,
+    });
+  };
 
   // Patch page.goto to automatically handle Cloudflare challenges
   const originalGoto = page.goto.bind(page);
-  const MAX_CF_RETRIES = 3;
+  const MAX_CF_RETRIES = 2;
   page.goto = async function (url, options = {}) {
+    const urlString = typeof url === 'string' ? url : String(url);
     let response = await originalGoto(url, options);
 
     for (let attempt = 0; attempt < MAX_CF_RETRIES; attempt++) {
       if (!(await isCloudflareChallenge(page))) return response;
 
-      sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: `Cloudflare challenge detected (attempt ${attempt + 1}/${MAX_CF_RETRIES}) — trying to resolve...` });
+      emitActiveProgress(`Cloudflare challenge detected (attempt ${attempt + 1}/${MAX_CF_RETRIES})`, {
+        url: urlString,
+        challenge: true,
+      });
 
       // Step 1: Try clicking the Turnstile checkbox if present
-      const solved = await trySolveTurnstile(page, 15000);
+      const solved = await trySolveTurnstile(page, 6000);
       if (solved) {
-        sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: 'Cloudflare challenge resolved via Turnstile.' });
-        await page.waitForTimeout(2000);
+        emitActiveProgress('Cloudflare challenge resolved via Turnstile.', {
+          url: urlString,
+          challenge: true,
+        });
+        await page.waitForTimeout(750);
         return response;
       }
 
@@ -4287,15 +4307,18 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
                 !document.body.innerText.includes('Just a moment') &&
                 !document.body.innerText.includes('needs to be verified') &&
                 !document.body.innerText.includes('Checking your browser'),
-          { timeout: 30000 }
+          { timeout: 8000 }
         );
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(750);
         if (!(await isCloudflareChallenge(page))) return response;
       } catch {}
 
       // Step 3: Retry the full navigation with a backoff delay
-      const backoff = (attempt + 1) * 5000;
-      sendEvent({ type: 'test-progress', store: store.newStore, testId: '', step: `Challenge persisted — waiting ${backoff / 1000}s before retry...` });
+      const backoff = 1500 * (attempt + 1);
+      emitActiveProgress(`Challenge persisted — retrying in ${(backoff / 1000).toFixed(1)}s`, {
+        url: urlString,
+        challenge: true,
+      });
       await page.waitForTimeout(backoff);
       response = await originalGoto(url, options);
     }
@@ -4307,8 +4330,9 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     // attempt it once more, and if that also fails, login is marked
     // failed and every remaining test for this store is skipped.
     if (await isCloudflareChallenge(page)) {
-      const err = new Error(`Cloudflare challenge could not be resolved after ${MAX_CF_RETRIES} attempts`);
+      const err = new Error(`Cloudflare blocked navigation to ${urlString} after ${MAX_CF_RETRIES} attempts`);
       err.cloudflareBlocked = true;
+      err.blockedUrl = urlString;
       throw err;
     }
 
@@ -4329,6 +4353,8 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     // Ensure login happens before other tests
     if (!loginDone && testId !== 'storefront-login') {
       const loginTest = TEST_REGISTRY['storefront-login'];
+      activeTestId = 'storefront-login';
+      activeTestName = loginTest.name;
       const loginStartedAt = Date.now();
       sendEvent({
         type: 'test-start',
@@ -4392,6 +4418,8 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
 
     if (testId === 'storefront-login' && loginDone) continue;
 
+    activeTestId = testId;
+    activeTestName = test.name;
     const testStartedAt = Date.now();
     sendEvent({
       type: 'test-start',
@@ -4411,18 +4439,29 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
 
       // Retry once if failed
       if (!result.passed) {
-        retried = true;
-        sendEvent({ type: 'test-progress', store: store.newStore, testId, step: '⟳ Test failed — retrying once...' });
-        try {
-          result = await test.run(page, store, (data) =>
-            sendEvent({ type: 'test-progress', store: store.newStore, testId, ...data })
-          );
-          if (result.passed) {
-            result.message = `[Passed on retry] ${result.message}`;
+        if (result.cloudflareBlocked) {
+          sendEvent({
+            type: 'test-progress',
+            store: store.newStore,
+            testId,
+            step: `Cloudflare blocked this test at ${result.blockedUrl || 'an unknown URL'} — failing fast.`,
+            url: result.blockedUrl || '',
+            challenge: true,
+          });
+        } else {
+          retried = true;
+          sendEvent({ type: 'test-progress', store: store.newStore, testId, step: '⟳ Test failed — retrying once...' });
+          try {
+            result = await test.run(page, store, (data) =>
+              sendEvent({ type: 'test-progress', store: store.newStore, testId, ...data })
+            );
+            if (result.passed) {
+              result.message = `[Passed on retry] ${result.message}`;
+            }
+          } catch (retryErr) {
+            // Keep original failure
+            result = { passed: false, message: `Error on retry: ${retryErr.message}` };
           }
-        } catch (retryErr) {
-          // Keep original failure
-          result = { passed: false, message: `Error on retry: ${retryErr.message}` };
         }
       }
 
@@ -4437,9 +4476,21 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
       });
       if (testId === 'storefront-login') loginDone = true;
     } catch (err) {
-      // First attempt threw — retry once
-      sendEvent({ type: 'test-progress', store: store.newStore, testId, step: '⟳ Test errored — retrying once...' });
+      if (err.cloudflareBlocked) {
+        sendEvent({
+          type: 'test-progress',
+          store: store.newStore,
+          testId,
+          step: `Cloudflare blocked this test at ${err.blockedUrl || 'an unknown URL'} — failing fast.`,
+          url: err.blockedUrl || '',
+          challenge: true,
+        });
+      } else {
+        // First attempt threw — retry once
+        sendEvent({ type: 'test-progress', store: store.newStore, testId, step: '⟳ Test errored — retrying once...' });
+      }
       try {
+        if (err.cloudflareBlocked) throw err;
         result = await test.run(page, store, (data) =>
           sendEvent({ type: 'test-progress', store: store.newStore, testId, ...data })
         );
@@ -4475,6 +4526,8 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
           durationSec: Number(((Date.now() - testStartedAt) / 1000).toFixed(1)),
           passed: false,
           message: `Error: ${retryErr.message}`,
+          blockedUrl: retryErr.blockedUrl || null,
+          cloudflareBlocked: Boolean(retryErr.cloudflareBlocked),
         });
       }
     }

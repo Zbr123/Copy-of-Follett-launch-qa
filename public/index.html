@@ -1695,7 +1695,10 @@
                 tr.badge.className = 'tr-badge ' + s;
                 tr.badge.textContent = data.passed ? 'Passed' : 'Failed';
                 tr.durationEl.textContent = data.durationSec != null ? `${data.durationSec}s` : '';
-                tr.msgEl.textContent = data.durationSec != null ? `[${data.durationSec}s] ${data.message}` : data.message;
+                const extraMsg = data.blockedUrl ? ` (${data.blockedUrl})` : '';
+                tr.msgEl.textContent = data.durationSec != null
+                  ? `[${data.durationSec}s] ${data.message}${extraMsg}`
+                  : `${data.message}${extraMsg}`;
                 if (!data.passed) tr.el.classList.add('expanded');
                 totalTests++;
                 if (data.passed) { passedTests++; resultState[data.store].passCount++; }
@@ -1707,6 +1710,8 @@
                   passed: data.passed, message: data.message,
                   durationMs: data.durationMs || null,
                   durationSec: data.durationSec || null,
+                  blockedUrl: data.blockedUrl || null,
+                  cloudflareBlocked: Boolean(data.cloudflareBlocked),
                   steps: tr.steps.slice(), screenshots: tr.screenshots.slice(),
                   checks: data.checks || [],
                 });

@@ -156,6 +156,8 @@ app.post('/api/run-tests', async (req, res) => {
         message: data.message,
         durationMs: data.durationMs || null,
         durationSec: data.durationSec || null,
+        blockedUrl: data.blockedUrl || null,
+        cloudflareBlocked: Boolean(data.cloudflareBlocked),
         checks: data.checks || [],
         screenshots: screenshotTracker[key] || [],
         timestamp: new Date().toISOString(),
@@ -686,6 +688,8 @@ app.post('/api/schedule-run', (req, res) => {
           passed: data.passed, message: data.message,
           durationMs: data.durationMs || null,
           durationSec: data.durationSec || null,
+          blockedUrl: data.blockedUrl || null,
+          cloudflareBlocked: Boolean(data.cloudflareBlocked),
           checks: data.checks || [],
           timestamp: new Date().toISOString(),
         });
