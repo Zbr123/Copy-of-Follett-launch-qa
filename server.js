@@ -58,9 +58,10 @@ if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR, { recursive: true });
 //   5. When all stores have completed (success or failure), send a
 //      `complete` event and close the stream.
 //
-// Because the work happens in worker processes, multiple users can hit
-// this endpoint concurrently without blocking each other — the API
-// process only does bookkeeping and streaming.
+// Interactive dashboard runs use the simpler direct-run path again.
+// This matches the older behavior that was working for single-store
+// runs: the API process calls runTests() directly and streams results
+// over the same SSE connection.
 app.post('/api/run-tests', async (req, res) => {
   const { stores, tests, concurrency } = req.body;
 
@@ -71,22 +72,13 @@ app.post('/api/run-tests', async (req, res) => {
     return res.status(400).json({ error: 'No tests selected' });
   }
 
-  // Set up SSE — flushHeaders() forces Express/Node to send headers
-  // immediately so the browser opens the stream and starts receiving
-  // events as soon as we write them (instead of buffering until the
-  // first ~16 KB of body accumulates).
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // disables buffering in nginx/Railway proxies
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
-
-  // Send an initial heartbeat immediately so the client knows the
-  // stream is alive — prevents the "stuck on Running…" symptom when
-  // Redis or workers are down and the rest of this handler stalls.
   res.write(`data: ${JSON.stringify({ type: 'connecting' })}\n\n`);
 
-  // Create a run record for persistence
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
   const runFile = path.join(RUNS_DIR, `${runId}.json`);
   const runData = {
@@ -94,59 +86,23 @@ app.post('/api/run-tests', async (req, res) => {
     startedAt: new Date().toISOString(),
     stores: stores.map(s => s.newStore),
     tests,
-    concurrency: concurrency || 3, // now a legacy hint only — real concurrency = worker count × WORKER_CONCURRENCY
+    concurrency: concurrency || 3,
     results: [],
     status: 'running',
   };
   fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
 
-  // Track screenshots per store+test as they arrive
-  const screenshotTracker = {}; // key: "store|testId" → [{ src, label }]
+  const screenshotTracker = {};
 
-  // Writes to the run JSON are debounced — on a big run we might see
-  // hundreds of events per second and we don't want to thrash the disk.
-  //
-  // Status-field race: the worker process is now responsible for flipping
-  // status → 'complete' (so the dashboard still updates when the browser
-  // or server.js has disconnected). If the worker wins the race and marks
-  // complete before the polling loop below, a late debounced write from
-  // this function would otherwise clobber that. Read the current status
-  // off disk and preserve it if the worker already finalized.
-  let pendingWrite = null;
-  const scheduleWrite = () => {
-    if (pendingWrite) return;
-    pendingWrite = setTimeout(() => {
-      pendingWrite = null;
-      try {
-        let preservedStatus = null;
-        let preservedCompletedAt = null;
-        try {
-          const existing = JSON.parse(fs.readFileSync(runFile, 'utf8'));
-          if (existing.status === 'complete' || existing.status === 'error') {
-            preservedStatus = existing.status;
-            preservedCompletedAt = existing.completedAt;
-          }
-        } catch (_) {}
-        const toWrite = preservedStatus
-          ? { ...runData, status: preservedStatus, completedAt: preservedCompletedAt }
-          : runData;
-        fs.writeFileSync(runFile, JSON.stringify(toWrite, null, 2));
-      } catch (_) {}
-    }, 250);
-  };
-
-  const handleEvent = (data) => {
-    // Forward to the SSE client (if still connected).
+  const sendEvent = (data) => {
     try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch (_) {}
 
-    // Collect screenshots from progress events
     if (data.type === 'test-progress' && data.screenshot) {
       const key = `${data.store}|${data.testId}`;
       if (!screenshotTracker[key]) screenshotTracker[key] = [];
       screenshotTracker[key].push({ src: data.screenshot, label: data.label || '' });
     }
 
-    // Persist test results with their screenshots
     if (data.type === 'test-result') {
       const key = `${data.store}|${data.testId}`;
       runData.results.push({
@@ -162,95 +118,22 @@ app.post('/api/run-tests', async (req, res) => {
         screenshots: screenshotTracker[key] || [],
         timestamp: new Date().toISOString(),
       });
-      scheduleWrite();
+      try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
     }
   };
 
-  // Disconnect detection — if the browser closes its SSE connection the
-  // run keeps executing on the workers (that's the whole point of
-  // decoupling via the queue).
-  //
-  // We intentionally do NOT unsubscribe from Redis on browser close.
-  // Events arriving after the browser leaves still need to be persisted
-  // to disk (runData.results), otherwise re-opening the run in the
-  // dashboard shows a half-finished picture. The subscription is torn
-  // down in the `finally` block when the run actually completes.
-  let unsubscribe = null;
-  let finished = false;
-
   try {
-    await initRunStatus(runId, stores.length);
-
-    // Subscribe BEFORE enqueuing so we can't miss the very first event.
-    unsubscribe = await subscribeToRun(runId, handleEvent);
-
-    // Enqueue one job per store. Priority = store index + 1 so runs
-    // round-robin instead of one big run starving everyone else.
-    // BullMQ processes lower priority numbers first and FIFO within
-    // the same priority, so:
-    //   User A submits [a1, a2, …, a50] at t=0
-    //   User B submits [b1, b2, b3]     at t=1
-    // Order:  a1 → b1 → a2 → b2 → a3 → b3 → a4 → a5 → … → a50
-    // B's small run finishes after 3 slots even though A was first.
-    const queue = storeTestQueue();
-    await Promise.all(
-      stores.map((store, idx) =>
-        queue.add(
-          'store-test',
-          { runId, store, testIds: tests },
-          {
-            jobId: safeJobId(runId, idx, store.newStore),
-            priority: idx + 1,
-          }
-        )
-      )
-    );
-
-    // Send an initial summary event so the frontend can render the
-    // per-store grid immediately. Include queue stats so the user can
-    // see how busy the system is at submission time ("12 stores ahead
-    // of you across 2 active workers").
-    let queueSnapshot = {};
-    try {
-      const counts = await queue.getJobCounts('wait', 'active');
-      const workers = await queue.getWorkers();
-      // Subtract this run's own jobs from the `wait` count so the number
-      // represents work ahead of *this* user, not their own submission.
-      const othersWaiting = Math.max(0, counts.wait - stores.length);
-      queueSnapshot = {
-        othersWaiting,
-        inFlight: counts.active,
-        workers: workers.length,
-      };
-    } catch (_) {}
-    handleEvent({
+    sendEvent({
       type: 'run-start',
       runId,
       totalStores: stores.length,
-      queue: queueSnapshot,
+      queue: { othersWaiting: 0, inFlight: 0, workers: 1 },
     });
-
-    // Poll the run counter until all stores have completed (or failed).
-    // This is a lightweight check — ~1 hit to Redis per second.
-    await new Promise((resolve) => {
-      const interval = setInterval(async () => {
-        if (finished) return;
-        const status = await getRunStatus(runId).catch(() => null);
-        if (status && (status.completed + status.failed) >= status.total) {
-          finished = true;
-          clearInterval(interval);
-          resolve();
-        }
-      }, 1000);
-    });
-
-    // Flush any pending disk write before we finalize.
-    if (pendingWrite) { clearTimeout(pendingWrite); pendingWrite = null; }
+    await runTests(stores, tests, sendEvent, { concurrency: concurrency || 3 });
     runData.status = 'complete';
     runData.completedAt = new Date().toISOString();
     try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
-
-    handleEvent({ type: 'complete' });
+    sendEvent({ type: 'complete' });
   } catch (err) {
     console.error('[api/run-tests] error:', err);
     runData.status = 'error';
@@ -258,7 +141,6 @@ app.post('/api/run-tests', async (req, res) => {
     try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
     try { res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`); } catch (_) {}
   } finally {
-    if (unsubscribe) { unsubscribe().catch(() => {}); unsubscribe = null; }
     try { res.end(); } catch (_) {}
   }
 });
