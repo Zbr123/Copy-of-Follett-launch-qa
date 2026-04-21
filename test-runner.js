@@ -10,6 +10,16 @@ chromium.use(StealthPlugin());
  * Detect if the current page is a Cloudflare challenge/verification page.
  */
 async function isCloudflareChallenge(page) {
+  // Narrow detector: matches only strings that appear on an actual CF
+  // interstitial / "challenge running" page, never on a successfully
+  // delivered Shopify page that happens to embed the Turnstile widget
+  // for anti-fraud (cart, checkout, login, filtered collections).
+  //
+  // Previously we also matched 'cf-turnstile' and 'turnstile/v0/api.js',
+  // but those ship in the static HTML of many non-challenge pages on
+  // CF-protected sites and caused false positives — Bright Data was
+  // delivering the real page, we were misreading it as a block, and
+  // the retry loop would give up after 2 attempts.
   try {
     const content = await page.content();
     return (
@@ -19,8 +29,6 @@ async function isCloudflareChallenge(page) {
       content.includes('Verify you are human') ||
       content.includes('needs to be verified before you can proceed') ||
       content.includes('challenges.cloudflare.com') ||
-      content.includes('cf-turnstile') ||
-      content.includes('turnstile/v0/api.js') ||
       content.includes('cf-please-wait') ||
       content.includes('cf-spinner')
     );
