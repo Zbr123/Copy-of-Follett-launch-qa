@@ -172,17 +172,37 @@ async function scanStore(browser, store, sendEvent) {
 
   sendEvent({ type: 'ada-store-start', store: storeName });
 
-  const context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
-    deviceScaleFactor: 2,
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  });
+  // See matching comment in test-runner.js: when the worker is in
+  // remote-browser mode, the provider (Bright Data) owns the fingerprint
+  // end-to-end; overriding userAgent / viewport client-side creates a
+  // JS-vs-HTTP-header UA mismatch that CF flags as a bot signature.
+  // Gate must match worker.js / installBandwidthBlocking / test-runner —
+  // require both env vars so we never half-activate remote behavior.
+  const useRemoteBrowser =
+    process.env.REMOTE_BROWSER_ENABLED === '1' && !!process.env.BROWSER_WS_URL;
+  const context = await browser.newContext(
+    useRemoteBrowser
+      ? {}
+      : {
+          viewport: { width: 1920, height: 1080 },
+          deviceScaleFactor: 2,
+          userAgent:
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+  );
   await installBandwidthBlocking(context);
   const page = wrapPageForCapture(await context.newPage());
 
+  // Remote mode: 3-min timeout matches Bright Data's reference script;
+  // hard CF resolutions over residential proxies can take 30–90s.
+  // Local mode keeps the original 20s timeout. Declared at function
+  // scope because several page.goto calls below (login, per-page scan)
+  // all need the same value.
+  const gotoTimeout = useRemoteBrowser ? 3 * 60 * 1000 : 20000;
+
   // Login if needed
   try {
-    await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
     await page.waitForTimeout(2000);
 
     const hasPasswordGate = await page.evaluate(() => {
@@ -264,7 +284,7 @@ async function scanStore(browser, store, sendEvent) {
     sendEvent({ type: 'ada-page-start', store: storeName, page: pageInfo.name });
 
     try {
-      await page.goto(pageInfo.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.goto(pageInfo.url, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
       await page.waitForTimeout(3000);
 
       // Take screenshot

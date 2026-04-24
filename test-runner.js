@@ -4187,17 +4187,41 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
   //   - Shared persistent: given a BrowserContext directly, reuse it
   //     across stores so cookies (including cf_clearance) persist.
   //     Used by sweeps for Cloudflare resilience.
+  // When the worker is in remote-browser mode (Bright Data Browser API
+  // or similar), the provider owns the whole fingerprint — UA, viewport,
+  // TLS signature, timezone, residential IP — end to end. Overriding any
+  // of those client-side (e.g. passing a `userAgent` here) makes
+  // `navigator.userAgent` in JS disagree with the HTTP-header UA the
+  // provider actually sends upstream, and anti-bot systems flag that
+  // mismatch as a bot signature and challenge the request. Bright Data's
+  // own reference script uses plain `browser.newPage()` with no context
+  // options for this exact reason — we match that shape in remote mode.
+  // Local mode keeps the overrides because there is no server-side
+  // fingerprint manager underneath us.
+  //
+  // Gate matches worker.js + installBandwidthBlocking: require BOTH env
+  // vars so remote behavior is enabled only when the worker is actually
+  // connecting to a remote browser. Prevents a half-activated state
+  // where fingerprint overrides are stripped but we're still on local
+  // Chromium (which would leave us with a bare browser on Railway's
+  // datacenter IP — a guaranteed CF block).
+  const useRemoteBrowser =
+    process.env.REMOTE_BROWSER_ENABLED === '1' && !!process.env.BROWSER_WS_URL;
   let context;
   let ownsContext = false;
   if (opts.sharedContext) {
     context = browserOrCtx; // already a BrowserContext
   } else {
-    context = await browserOrCtx.newContext({
-      viewport: { width: 1920, height: 1080 },
-      deviceScaleFactor: 2,
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-    });
+    context = await browserOrCtx.newContext(
+      useRemoteBrowser
+        ? {}
+        : {
+            viewport: { width: 1920, height: 1080 },
+            deviceScaleFactor: 2,
+            userAgent:
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+          }
+    );
     ownsContext = true;
     // Attach bandwidth blocking before any page is created so the very
     // first navigation already benefits. Safe to re-apply on shared
@@ -4221,70 +4245,95 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     });
   };
 
-  // Patch page.goto to automatically handle Cloudflare challenges
+  // Patch page.goto:
+  //   • Remote mode (Bright Data / managed browser): trust the provider
+  //     to solve CF server-side. Our DOM-based detector false-positives
+  //     on pages that embed Turnstile as an anti-fraud widget (cart,
+  //     checkout, filtered collections, login) because the script tags
+  //     and iframe hosts ship in the static HTML even when there is no
+  //     active challenge. Running the retry loop on top of a working
+  //     provider only adds latency and spurious failures. The 3-minute
+  //     timeout matches Bright Data's reference script — hard CF
+  //     challenges behind residential proxies can legitimately take
+  //     30–90s to resolve.
+  //   • Local mode: keep the full retry loop — local Chromium has no
+  //     server-side unlocker, so we have to detect and retry ourselves.
   const originalGoto = page.goto.bind(page);
-  const MAX_CF_RETRIES = 2;
-  page.goto = async function (url, options = {}) {
-    const urlString = typeof url === 'string' ? url : String(url);
-    let response = await originalGoto(url, options);
+  if (useRemoteBrowser) {
+    // Force 3-min timeout in remote mode. Many page.goto calls in test
+    // bodies pass a hardcoded `timeout: 10000-30000` that was tuned for
+    // local headless Chromium; on Bright Data's residential + CF-solving
+    // path those values are far too tight and cause spurious navigation
+    // timeouts. Spread `options` first so our 3-min timeout wins, but
+    // preserve everything else the caller passes (waitUntil, referer,
+    // etc.). 3 min matches Bright Data's reference script.
+    page.goto = async function (url, options = {}) {
+      return originalGoto(url, { ...options, timeout: 3 * 60 * 1000 });
+    };
+  } else {
+    const MAX_CF_RETRIES = 2;
+    page.goto = async function (url, options = {}) {
+      const urlString = typeof url === 'string' ? url : String(url);
+      let response = await originalGoto(url, options);
 
-    for (let attempt = 0; attempt < MAX_CF_RETRIES; attempt++) {
-      if (!(await isCloudflareChallenge(page))) return response;
+      for (let attempt = 0; attempt < MAX_CF_RETRIES; attempt++) {
+        if (!(await isCloudflareChallenge(page))) return response;
 
-      emitActiveProgress(`Cloudflare challenge detected (attempt ${attempt + 1}/${MAX_CF_RETRIES})`, {
-        url: urlString,
-        challenge: true,
-      });
-
-      // Step 1: Try clicking the Turnstile checkbox if present
-      const solved = await trySolveTurnstile(page, 6000);
-      if (solved) {
-        emitActiveProgress('Cloudflare challenge resolved via Turnstile.', {
+        emitActiveProgress(`Cloudflare challenge detected (attempt ${attempt + 1}/${MAX_CF_RETRIES})`, {
           url: urlString,
           challenge: true,
         });
-        await page.waitForTimeout(750);
-        return response;
+
+        // Step 1: Try clicking the Turnstile checkbox if present
+        const solved = await trySolveTurnstile(page, 6000);
+        if (solved) {
+          emitActiveProgress('Cloudflare challenge resolved via Turnstile.', {
+            url: urlString,
+            challenge: true,
+          });
+          await page.waitForTimeout(750);
+          return response;
+        }
+
+        // Step 2: Wait for auto-resolve (some challenges resolve without interaction)
+        try {
+          await page.waitForFunction(
+            () => !document.body.innerText.includes('Verify you are human') &&
+                  !document.body.innerText.includes('Just a moment') &&
+                  !document.body.innerText.includes('needs to be verified') &&
+                  !document.body.innerText.includes('Checking your browser'),
+            { timeout: 8000 }
+          );
+          await page.waitForTimeout(750);
+          if (!(await isCloudflareChallenge(page))) return response;
+        } catch {}
+
+        // Step 3: Retry the full navigation with a backoff delay
+        const backoff = 1500 * (attempt + 1);
+        emitActiveProgress(`Challenge persisted — retrying in ${(backoff / 1000).toFixed(1)}s`, {
+          url: urlString,
+          challenge: true,
+        });
+        await page.waitForTimeout(backoff);
+        response = await originalGoto(url, options);
       }
 
-      // Step 2: Wait for auto-resolve (some challenges resolve without interaction)
-      try {
-        await page.waitForFunction(
-          () => !document.body.innerText.includes('Verify you are human') &&
-                !document.body.innerText.includes('Just a moment') &&
-                !document.body.innerText.includes('needs to be verified') &&
-                !document.body.innerText.includes('Checking your browser'),
-          { timeout: 8000 }
-        );
-        await page.waitForTimeout(750);
-        if (!(await isCloudflareChallenge(page))) return response;
-      } catch {}
+      // Final check — if still stuck, throw. Letting the test proceed
+      // against a CF challenge page just wastes another ~5 min on
+      // selector waits that will never succeed. Throwing here fails the
+      // current test fast; the outer retry logic in runStoreTests will
+      // attempt it once more, and if that also fails, login is marked
+      // failed and every remaining test for this store is skipped.
+      if (await isCloudflareChallenge(page)) {
+        const err = new Error(`Cloudflare blocked navigation to ${urlString} after ${MAX_CF_RETRIES} attempts`);
+        err.cloudflareBlocked = true;
+        err.blockedUrl = urlString;
+        throw err;
+      }
 
-      // Step 3: Retry the full navigation with a backoff delay
-      const backoff = 1500 * (attempt + 1);
-      emitActiveProgress(`Challenge persisted — retrying in ${(backoff / 1000).toFixed(1)}s`, {
-        url: urlString,
-        challenge: true,
-      });
-      await page.waitForTimeout(backoff);
-      response = await originalGoto(url, options);
-    }
-
-    // Final check — if still stuck, throw. Letting the test proceed
-    // against a CF challenge page just wastes another ~5 min on
-    // selector waits that will never succeed. Throwing here fails the
-    // current test fast; the outer retry logic in runStoreTests will
-    // attempt it once more, and if that also fails, login is marked
-    // failed and every remaining test for this store is skipped.
-    if (await isCloudflareChallenge(page)) {
-      const err = new Error(`Cloudflare blocked navigation to ${urlString} after ${MAX_CF_RETRIES} attempts`);
-      err.cloudflareBlocked = true;
-      err.blockedUrl = urlString;
-      throw err;
-    }
-
-    return response;
-  };
+      return response;
+    };
+  }
 
   let loginDone = false;
 
