@@ -5246,11 +5246,14 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     // CDP connection (Browserless, Bright Data Scraping Browser, etc.)
     // — same protocol the worker uses, so a single BROWSER_WS_URL env
     // var works for both code paths.
+    console.log(`[runTests] Connecting to remote browser: ${options.endpoint.replace(/:[^:@]*@/, ':***@')}`);
     browser = await chromium.connectOverCDP(options.endpoint);
+    console.log('[runTests] Remote browser connected successfully');
     sendEvent({ type: 'browser-info', message: `Connected to remote browser: ${options.endpoint.replace(/\?.*$/, '')}` });
   } else if (options.persistent) {
     const dataDir = options.userDataDir || path.join(DATA_DIR, '.browser-data');
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    console.log(`[runTests] Launching persistent context @ ${dataDir}`);
     sharedContext = await chromium.launchPersistentContext(dataDir, {
       headless: !headful,
       viewport: { width: 1920, height: 1080 },
@@ -5264,6 +5267,7 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     await installBandwidthBlocking(sharedContext);
     sendEvent({ type: 'browser-info', message: `Persistent ${headful ? 'headful' : 'headless'} context @ ${dataDir}` });
   } else {
+    console.log('[runTests] Launching local browser');
     browser = await chromium.launch({ headless: !headful, args: launchArgs });
   }
 
