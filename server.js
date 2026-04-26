@@ -28,6 +28,7 @@ function safeJobId(...parts) {
 const app = express();
 const PORT = process.env.PORT || 3847;
 const REMOTE_BROWSER_ENABLED = process.env.REMOTE_BROWSER_ENABLED === '1';
+console.log(`[boot] REMOTE_BROWSER_ENABLED=${REMOTE_BROWSER_ENABLED}, BROWSER_WS_URL=${process.env.BROWSER_WS_URL ? 'SET' : 'NOT SET'}, DATA_DIR=${DATA_DIR}`);
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -156,7 +157,11 @@ app.post('/api/run-tests', async (req, res) => {
       totalStores: stores.length,
       queue: { othersWaiting: 0, inFlight: 0, workers: 1 },
     });
-    await runTests(stores, tests, sendEvent, { concurrency: concurrency || 3 });
+    const runOpts = { concurrency: concurrency || 3 };
+    if (REMOTE_BROWSER_ENABLED && process.env.BROWSER_WS_URL) {
+      runOpts.endpoint = process.env.BROWSER_WS_URL;
+    }
+    await runTests(stores, tests, sendEvent, runOpts);
     runData.status = 'complete';
     runData.completedAt = new Date().toISOString();
     try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}

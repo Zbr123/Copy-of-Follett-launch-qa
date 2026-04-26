@@ -37,9 +37,10 @@ const CF_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 // Browser strategy for sweeps — overridden by env vars so the user can
 // point at Browserless/Bright Data without touching code.
+const SWEEP_ENDPOINT = process.env.SWEEP_BROWSER_ENDPOINT || process.env.BROWSER_WS_URL || null;
 const BROWSER_OPTIONS = {
-  endpoint: process.env.SWEEP_BROWSER_ENDPOINT || null,
-  persistent: process.env.SWEEP_BROWSER_ENDPOINT ? false : true,
+  endpoint: SWEEP_ENDPOINT,
+  persistent: SWEEP_ENDPOINT ? false : true,
   userDataDir: process.env.SWEEP_USER_DATA_DIR || path.join(DATA_DIR, '.browser-data'),
   headful: process.env.SWEEP_BROWSER_HEADFUL === '1',
 };
@@ -177,6 +178,7 @@ function deleteSweep(id) {
 // ─── Worker loop ────────────────────────────────────────────────────
 
 function start() {
+  console.log(`[sweep-worker] Starting — endpoint=${SWEEP_ENDPOINT ? 'SET' : 'NOT SET'}, concurrency=${MAX_CONCURRENT}, persistent=${BROWSER_OPTIONS.persistent}`);
   loadSweeps();
   if (tickHandle) clearInterval(tickHandle);
   tickHandle = setInterval(tick, TICK_INTERVAL_MS);

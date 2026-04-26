@@ -1284,6 +1284,12 @@
       { id: 'footer-text-sanity', name: 'Footer & Store Hours Text', desc: 'Check for literal \\n, &amp;amp;, formatting issues' },
       { id: 'external-link-targets', name: 'External Link Targets', desc: 'External links open in new tab and are reachable' },
       { id: 'price-floor-scan', name: 'Price Floor Scan', desc: 'Flag products listed under $1 (misconfigured variants)' },
+      { id: 'search-functionality', name: 'Search Functionality', desc: 'Verify site search works for GM and textbook items' },
+      { id: 'header-nav-integrity', name: 'Header & Nav Integrity', desc: 'Duplicate nav links, category content, taxonomy validation' },
+      { id: 'checkout-shipping-payment', name: 'Checkout Shipping & Payment', desc: 'Shipping address, phone field, delivery methods, payment errors' },
+      { id: 'mobile-responsiveness', name: 'Mobile Responsiveness', desc: 'Mobile viewport: hamburger menu, overflow, tap targets' },
+      { id: 'rental-purchase-options', name: 'Rental & Purchase Options', desc: 'Buy/Rent selectors present on textbook product pages' },
+      { id: 'price-filter', name: 'Price & Collection Filters', desc: 'Filter checkboxes work on collection/search pages' },
     ];
 
     const selectedTests = new Set(TESTS.map(t => t.id));

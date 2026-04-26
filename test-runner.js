@@ -354,6 +354,36 @@ const TEST_REGISTRY = {
     description: 'Flag products listed under $1.00 (likely misconfigured OOS variants)',
     run: testPriceFloorScan,
   },
+  'search-functionality': {
+    name: 'Search Functionality',
+    description: 'Verify site search works for GM items and textbooks (ISBN search, GM search)',
+    run: testSearchFunctionality,
+  },
+  'header-nav-integrity': {
+    name: 'Header & Nav Integrity',
+    description: 'Check for duplicate nav links, verify category pages have products, validate taxonomy',
+    run: testHeaderNavIntegrity,
+  },
+  'checkout-shipping-payment': {
+    name: 'Checkout Shipping & Payment',
+    description: 'Verify shipping address, phone field, delivery methods, and payment acceptance on checkout',
+    run: testCheckoutShippingPayment,
+  },
+  'mobile-responsiveness': {
+    name: 'Mobile Responsiveness',
+    description: 'Test homepage, collections, search, and cart at mobile viewport (375×812)',
+    run: testMobileResponsiveness,
+  },
+  'rental-purchase-options': {
+    name: 'Rental & Purchase Options',
+    description: 'Verify Buy/Rent option selectors are present and functional on textbook product pages',
+    run: testRentalPurchaseOptions,
+  },
+  'price-filter': {
+    name: 'Price & Collection Filters',
+    description: 'Verify filter checkboxes work on collection/search result pages',
+    run: testPriceFilterFunctionality,
+  },
 };
 
 // ─── Screenshot capture: memory-only, no filesystem ──────────────────
@@ -3567,6 +3597,879 @@ async function testExternalLinkTargets(page, store, emit) {
 }
 
 // ── 7. Price Floor Scan ─────────────────────────────────────────────
+// ─── Search Functionality ──────────────────────────────────────────
+// Catches TMTST-4368 (ISBN search broken), TMTST-3484 (GM search broken)
+async function testSearchFunctionality(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  const checks = [];
+
+  // Test 1: General merchandise search
+  emit({ step: 'Testing general merchandise search...' });
+  const gmSearchUrl = `${origin}/search?q=${encodeURIComponent('backpack')}`;
+  await page.goto(gmSearchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const gmShot = screenshotPath(store.newStore, 'search-functionality', '01_gm_search');
+  await page.screenshot({ path: gmShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(gmShot), label: 'GM search: "backpack"' });
+
+  const gmResults = await page.evaluate(() => {
+    const products = document.querySelectorAll('a[href*="/products/"]');
+    const visible = Array.from(products).filter(el => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    const noResults = /no results|no products|nothing found|0 results/i.test(document.body.innerText);
+    return { count: visible.length, noResults };
+  });
+
+  if (gmResults.noResults || gmResults.count === 0) {
+    checks.push({ name: 'GM Search ("backpack")', ok: false, detail: 'No products returned for general merchandise search' });
+  } else {
+    checks.push({ name: 'GM Search ("backpack")', ok: true, detail: `${gmResults.count} product(s) found` });
+  }
+
+  // Test 2: Textbook / ISBN-style search
+  emit({ step: 'Testing textbook search...' });
+  const tbSearchUrl = `${origin}/search?q=${encodeURIComponent('textbook')}`;
+  await page.goto(tbSearchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const tbShot = screenshotPath(store.newStore, 'search-functionality', '02_textbook_search');
+  await page.screenshot({ path: tbShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(tbShot), label: 'Textbook search' });
+
+  const tbResults = await page.evaluate(() => {
+    const products = document.querySelectorAll('a[href*="/products/"]');
+    const visible = Array.from(products).filter(el => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    const noResults = /no results|no products|nothing found|0 results/i.test(document.body.innerText);
+    return { count: visible.length, noResults };
+  });
+
+  if (tbResults.noResults || tbResults.count === 0) {
+    checks.push({ name: 'Textbook Search', ok: false, detail: 'No products returned for textbook search' });
+  } else {
+    checks.push({ name: 'Textbook Search', ok: true, detail: `${tbResults.count} product(s) found` });
+  }
+
+  // Test 3: Verify search bar is accessible from homepage
+  emit({ step: 'Checking search bar accessibility from homepage...' });
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const searchBarExists = await page.evaluate(() => {
+    // Look for search input or search icon/button
+    const searchInput = document.querySelector(
+      'input[type="search"], input[name="q"], input[placeholder*="search" i], input[aria-label*="search" i]'
+    );
+    const searchIcon = document.querySelector(
+      'a[href*="/search"], button[aria-label*="search" i], [data-action*="search"], .search-icon, .icon-search'
+    );
+    return { hasInput: !!searchInput, hasIcon: !!searchIcon };
+  });
+
+  if (!searchBarExists.hasInput && !searchBarExists.hasIcon) {
+    checks.push({ name: 'Search Bar Present', ok: false, detail: 'No search input or search icon found on homepage' });
+  } else {
+    checks.push({ name: 'Search Bar Present', ok: true, detail: searchBarExists.hasInput ? 'Search input found' : 'Search icon found' });
+  }
+
+  const failed = checks.filter(c => !c.ok);
+  for (const c of checks) {
+    emit({ step: `${c.ok ? '✅' : '❌'} ${c.name}: ${c.detail}` });
+  }
+
+  return {
+    passed: failed.length === 0,
+    message: failed.length === 0
+      ? `All ${checks.length} search checks passed`
+      : `${failed.length}/${checks.length} failed: ${failed.map(f => f.name).join(', ')}`,
+    checks,
+  };
+}
+
+// ─── Header & Nav Integrity ───────────────────────────────────────
+// Catches TMTST-4168 (duplicate textbook link), TMTST-4228 (shop-by
+// duplicates header), TMTST-4290/4098/3597 (taxonomy data missing)
+async function testHeaderNavIntegrity(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  const checks = [];
+
+  emit({ step: 'Analyzing header navigation links...' });
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const headerShot = screenshotPath(store.newStore, 'header-nav-integrity', '01_header');
+  await page.screenshot({ path: headerShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(headerShot), label: 'Header navigation' });
+
+  // Check 1: Duplicate links in header nav
+  const navAnalysis = await page.evaluate(() => {
+    // Find the main navigation — usually <header>, <nav>, or role="navigation"
+    const headerEl = document.querySelector('header') || document.querySelector('nav') || document.querySelector('[role="navigation"]');
+    if (!headerEl) return { links: [], duplicates: [], hasNav: false };
+
+    const links = Array.from(headerEl.querySelectorAll('a'));
+    const linkTexts = links
+      .filter(a => {
+        const rect = a.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      })
+      .map(a => ({
+        text: a.textContent.trim().replace(/\s+/g, ' '),
+        href: a.getAttribute('href') || '',
+      }))
+      .filter(l => l.text.length > 0 && l.text.length < 50);
+
+    // Find duplicate link text (same text appearing multiple times)
+    const textCounts = {};
+    for (const l of linkTexts) {
+      const key = l.text.toUpperCase();
+      if (!textCounts[key]) textCounts[key] = [];
+      textCounts[key].push(l.href);
+    }
+
+    const duplicates = Object.entries(textCounts)
+      .filter(([, hrefs]) => hrefs.length > 1)
+      .map(([text, hrefs]) => ({ text, count: hrefs.length, hrefs }));
+
+    return { links: linkTexts.slice(0, 30), duplicates, hasNav: true };
+  });
+
+  if (!navAnalysis.hasNav) {
+    checks.push({ name: 'Header Navigation', ok: false, detail: 'No header/nav element found' });
+  } else {
+    emit({ step: `Found ${navAnalysis.links.length} visible nav links` });
+
+    if (navAnalysis.duplicates.length > 0) {
+      const dupList = navAnalysis.duplicates.map(d => `"${d.text}" (×${d.count})`).join(', ');
+      checks.push({ name: 'No Duplicate Nav Links', ok: false, detail: `Duplicate links: ${dupList}` });
+      emit({ step: `❌ Duplicate nav links found: ${dupList}` });
+    } else {
+      checks.push({ name: 'No Duplicate Nav Links', ok: true, detail: 'No duplicate link text in header' });
+    }
+  }
+
+  // Check 2: Verify top-level category links lead to pages with products
+  emit({ step: 'Checking category links for content...' });
+
+  const categoryLinks = await page.evaluate(() => {
+    const headerEl = document.querySelector('header') || document.querySelector('nav');
+    if (!headerEl) return [];
+    const links = Array.from(headerEl.querySelectorAll('a'));
+    return links
+      .filter(a => {
+        const href = a.getAttribute('href') || '';
+        const rect = a.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && href.includes('/collections/');
+      })
+      .map(a => ({
+        text: a.textContent.trim().replace(/\s+/g, ' '),
+        href: a.getAttribute('href'),
+      }))
+      .slice(0, 5); // check up to 5 category links
+  });
+
+  let emptyCategories = 0;
+  for (const cat of categoryLinks) {
+    const catUrl = cat.href.startsWith('http') ? cat.href : `${origin}${cat.href}`;
+    emit({ step: `Visiting category: "${cat.text}" → ${cat.href}` });
+
+    try {
+      await page.goto(catUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(1500);
+
+      const hasProducts = await page.evaluate(() => {
+        const products = document.querySelectorAll('a[href*="/products/"]');
+        const visible = Array.from(products).filter(el => {
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        });
+        return visible.length > 0;
+      });
+
+      if (!hasProducts) {
+        emptyCategories++;
+        emit({ step: `❌ Category "${cat.text}" has no visible products` });
+      } else {
+        emit({ step: `✅ Category "${cat.text}" has products` });
+      }
+    } catch (err) {
+      emptyCategories++;
+      emit({ step: `❌ Category "${cat.text}" failed to load: ${err.message}` });
+    }
+  }
+
+  if (categoryLinks.length === 0) {
+    checks.push({ name: 'Category Links', ok: true, detail: 'No /collections/ links in header (may use different URL structure)' });
+  } else if (emptyCategories > 0) {
+    checks.push({ name: 'Category Links Have Products', ok: false, detail: `${emptyCategories}/${categoryLinks.length} categories are empty` });
+  } else {
+    checks.push({ name: 'Category Links Have Products', ok: true, detail: `All ${categoryLinks.length} checked categories have products` });
+  }
+
+  // Check 3: Verify "Shop By" / taxonomy menu exists and has content
+  emit({ step: 'Checking Shop By / taxonomy menu...' });
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(1500);
+
+  const taxonomyCheck = await page.evaluate(() => {
+    const headerEl = document.querySelector('header') || document.querySelector('nav');
+    if (!headerEl) return { found: false };
+
+    const allLinks = Array.from(headerEl.querySelectorAll('a'));
+    const shopByLink = allLinks.find(a =>
+      /shop\s*by|categories|departments/i.test(a.textContent.trim())
+    );
+
+    // Check for mega-menu / dropdown items
+    const menuItems = headerEl.querySelectorAll('li > ul a, [class*="mega"] a, [class*="dropdown"] a, [class*="submenu"] a');
+    const visibleMenuItems = Array.from(menuItems).filter(el => {
+      // Include items that might be in dropdowns (hidden until hover)
+      return el.getAttribute('href') && el.textContent.trim().length > 0;
+    });
+
+    return {
+      found: !!shopByLink || visibleMenuItems.length > 0,
+      shopByText: shopByLink ? shopByLink.textContent.trim() : null,
+      subItemCount: visibleMenuItems.length,
+    };
+  });
+
+  if (taxonomyCheck.found) {
+    checks.push({ name: 'Taxonomy / Shop By', ok: true, detail: `Found${taxonomyCheck.shopByText ? ` "${taxonomyCheck.shopByText}"` : ''} with ${taxonomyCheck.subItemCount} sub-items` });
+  } else {
+    checks.push({ name: 'Taxonomy / Shop By', ok: false, detail: 'No Shop By / taxonomy menu structure found in header' });
+  }
+
+  const failed = checks.filter(c => !c.ok);
+  for (const c of checks) {
+    emit({ step: `${c.ok ? '✅' : '❌'} ${c.name}: ${c.detail}` });
+  }
+
+  return {
+    passed: failed.length === 0,
+    message: failed.length === 0
+      ? `All ${checks.length} nav integrity checks passed`
+      : `${failed.length}/${checks.length} failed: ${failed.map(f => f.name).join(', ')}`,
+    checks,
+  };
+}
+
+// ─── Checkout Shipping & Payment ──────────────────────────────────
+// Catches TMTST-4367 (ship-to address missing), TMTST-3599 (payment
+// failure message), TMTST-3439 (country dropdown), TMTST-4171 (pickup missing)
+async function testCheckoutShippingPayment(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  const qaState = getQaState(page);
+  const checks = [];
+
+  // Step 1: Ensure cart has items
+  let cartData = await readCartData(page);
+  if (qaState.standardCartReady && cartData && cartData.item_count > 0) {
+    emit({ step: `Reusing cart (${cartData.item_count} item(s))` });
+  } else {
+    emit({ step: 'Adding item to cart for checkout inspection...' });
+    await clearCart(page, origin, emit);
+    const addResult = await addStandardItemToCart(page, store, emit, {
+      listUrl: `${origin}/collections/all`,
+      maxProducts: 5,
+      screenshotPrefix: 'checkout-shipping',
+    });
+    if (!addResult.passed) {
+      return { passed: false, message: 'Could not add item to cart for checkout inspection' };
+    }
+  }
+
+  // Step 2: Navigate to checkout
+  emit({ step: 'Navigating to checkout...' });
+  await page.goto(`${origin}/checkout`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+  try {
+    await page.waitForSelector(
+      'input[type="email"], input[type="text"], [data-delivery-group], [class*="checkout"]',
+      { timeout: 20000 }
+    );
+  } catch {}
+  await page.waitForTimeout(5000);
+  try { await page.waitForLoadState('networkidle', { timeout: 15000 }); } catch {}
+
+  const checkoutShot = screenshotPath(store.newStore, 'checkout-shipping', '01_checkout');
+  await page.screenshot({ path: checkoutShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(checkoutShot), label: 'Checkout page' });
+
+  // Check 1: Payment acceptance error
+  emit({ step: 'Checking for payment failure messages...' });
+  const paymentError = await page.evaluate(() => {
+    const bodyText = document.body.innerText;
+    const patterns = [
+      /store can'?t accept payments/i,
+      /payment.*not.*available/i,
+      /unable to process payments/i,
+      /payments.*disabled/i,
+    ];
+    for (const p of patterns) {
+      const match = bodyText.match(p);
+      if (match) return match[0];
+    }
+    return null;
+  });
+
+  if (paymentError) {
+    checks.push({ name: 'Payment Acceptance', ok: false, detail: `Error found: "${paymentError}"` });
+  } else {
+    checks.push({ name: 'Payment Acceptance', ok: true, detail: 'No payment error messages found' });
+  }
+
+  // Check 2: Shipping address section exists
+  emit({ step: 'Checking for shipping address section...' });
+  const shippingSection = await page.evaluate(() => {
+    const bodyText = document.body.innerText;
+    const hasShipping = /ship(ping)?\s*(to|address)|delivery\s*address/i.test(bodyText);
+    const hasAddressFields = !!document.querySelector(
+      'input[autocomplete="address-line1"], input[name*="address"], input[placeholder*="address" i]'
+    );
+    return { hasShipping, hasAddressFields };
+  });
+
+  if (shippingSection.hasShipping || shippingSection.hasAddressFields) {
+    checks.push({ name: 'Shipping Address Section', ok: true, detail: 'Shipping/delivery address section found' });
+  } else {
+    checks.push({ name: 'Shipping Address Section', ok: false, detail: 'Shipping address section not found on checkout' });
+  }
+
+  // Check 3: Phone number field exists
+  emit({ step: 'Checking for phone number field...' });
+  const phoneField = await page.evaluate(() => {
+    const phone = document.querySelector(
+      'input[autocomplete="tel"], input[type="tel"], input[name*="phone"], input[placeholder*="phone" i]'
+    );
+    const label = document.querySelector('label');
+    const labels = Array.from(document.querySelectorAll('label, .field__label'));
+    const phoneLabel = labels.find(l => /phone/i.test(l.textContent));
+    return { hasField: !!phone, hasLabel: !!phoneLabel };
+  });
+
+  if (phoneField.hasField || phoneField.hasLabel) {
+    checks.push({ name: 'Phone Number Field', ok: true, detail: 'Phone number field present' });
+  } else {
+    checks.push({ name: 'Phone Number Field', ok: false, detail: 'Phone number field missing from checkout' });
+  }
+
+  // Check 4: Country dropdown (TMTST-3439 — country restricted to USA only)
+  emit({ step: 'Checking country dropdown options...' });
+  const countryCheck = await page.evaluate(() => {
+    const selects = document.querySelectorAll('select');
+    for (const select of selects) {
+      const name = (select.getAttribute('name') || '').toLowerCase();
+      const id = (select.getAttribute('id') || '').toLowerCase();
+      const autocomplete = (select.getAttribute('autocomplete') || '').toLowerCase();
+      if (name.includes('country') || id.includes('country') || autocomplete.includes('country')) {
+        const options = Array.from(select.querySelectorAll('option'));
+        return {
+          found: true,
+          optionCount: options.length,
+          values: options.slice(0, 5).map(o => o.textContent.trim()),
+        };
+      }
+    }
+    return { found: false };
+  });
+
+  if (countryCheck.found) {
+    if (countryCheck.optionCount <= 1) {
+      checks.push({ name: 'Country Dropdown', ok: false, detail: `Only ${countryCheck.optionCount} option(s) — may be restricted to USA only` });
+    } else {
+      checks.push({ name: 'Country Dropdown', ok: true, detail: `${countryCheck.optionCount} countries available` });
+    }
+  } else {
+    // Country dropdown might not be visible yet (Shopify progressive disclosure)
+    checks.push({ name: 'Country Dropdown', ok: true, detail: 'Country select not found (may load after address entry)' });
+  }
+
+  // Check 5: Delivery method options (pickup, ship)
+  emit({ step: 'Checking delivery method options...' });
+
+  // Scroll down to find delivery methods
+  await page.evaluate(() => window.scrollBy(0, 400));
+  await page.waitForTimeout(1000);
+
+  const deliveryMethods = await page.evaluate(() => {
+    const bodyText = document.body.innerText;
+    const hasShip = /ship(ping)?|deliver(y)?/i.test(bodyText);
+    const hasPickup = /pick\s*up|in[- ]?store/i.test(bodyText);
+    // Look for delivery method radio buttons / sections
+    const deliveryGroup = document.querySelector('[data-delivery-group], [class*="delivery-method"], [class*="shipping-method"]');
+    return { hasShip, hasPickup, hasDeliveryGroup: !!deliveryGroup };
+  });
+
+  const deliveryShot = screenshotPath(store.newStore, 'checkout-shipping', '02_delivery');
+  await page.screenshot({ path: deliveryShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(deliveryShot), label: 'Delivery methods area' });
+
+  // We note pickup status but don't fail — not all stores have pickup
+  emit({ step: `Delivery: Ship=${deliveryMethods.hasShip}, Pickup=${deliveryMethods.hasPickup}` });
+  if (!deliveryMethods.hasShip && !deliveryMethods.hasPickup) {
+    checks.push({ name: 'Delivery Methods', ok: false, detail: 'No delivery method options found (no Ship or Pickup)' });
+  } else {
+    const methods = [];
+    if (deliveryMethods.hasShip) methods.push('Ship');
+    if (deliveryMethods.hasPickup) methods.push('Pickup');
+    checks.push({ name: 'Delivery Methods', ok: true, detail: `Available: ${methods.join(', ')}` });
+  }
+
+  const failed = checks.filter(c => !c.ok);
+  for (const c of checks) {
+    emit({ step: `${c.ok ? '✅' : '❌'} ${c.name}: ${c.detail}` });
+  }
+
+  return {
+    passed: failed.length === 0,
+    message: failed.length === 0
+      ? `All ${checks.length} checkout shipping/payment checks passed`
+      : `${failed.length}/${checks.length} failed: ${failed.map(f => f.name).join(', ')}`,
+    checks,
+  };
+}
+
+// ─── Mobile Responsiveness ────────────────────────────────────────
+// Tests critical pages at mobile viewport (375×812, iPhone-class).
+// Catches TMTST-3447 and general mobile layout regressions.
+async function testMobileResponsiveness(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  const checks = [];
+
+  // Switch to mobile viewport
+  emit({ step: 'Switching to mobile viewport (375×812)...' });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.waitForTimeout(500);
+
+  // ── CHECK 1: Homepage loads and hamburger menu works ──
+  emit({ step: 'Loading homepage at mobile viewport...' });
+  await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const mobileHomeShot = screenshotPath(store.newStore, 'mobile-responsiveness', '01_mobile_home');
+  await page.screenshot({ path: mobileHomeShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(mobileHomeShot), label: 'Mobile homepage' });
+
+  // Check horizontal overflow
+  const overflowCheck = await page.evaluate(() => {
+    const body = document.body;
+    const html = document.documentElement;
+    const hasHorizontalScroll = body.scrollWidth > window.innerWidth + 5 ||
+                                 html.scrollWidth > window.innerWidth + 5;
+    return { hasHorizontalScroll, bodyWidth: body.scrollWidth, viewportWidth: window.innerWidth };
+  });
+
+  if (overflowCheck.hasHorizontalScroll) {
+    checks.push({ name: 'No Horizontal Overflow (Homepage)', ok: false, detail: `Body width ${overflowCheck.bodyWidth}px exceeds viewport ${overflowCheck.viewportWidth}px` });
+  } else {
+    checks.push({ name: 'No Horizontal Overflow (Homepage)', ok: true, detail: 'No horizontal scrollbar' });
+  }
+
+  // Check hamburger / mobile menu button
+  const menuButton = await page.evaluate(() => {
+    const selectors = [
+      'button[aria-label*="menu" i]',
+      'button[aria-label*="nav" i]',
+      '[class*="hamburger"]',
+      '[class*="menu-toggle"]',
+      '[class*="mobile-nav"]',
+      'button.menu',
+      'details[class*="menu"]',
+      'header button svg',
+      '[data-action*="menu"]',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          return { found: true, selector: sel, text: el.textContent.trim().substring(0, 20) };
+        }
+      }
+    }
+    return { found: false };
+  });
+
+  if (menuButton.found) {
+    checks.push({ name: 'Mobile Menu Button', ok: true, detail: `Found via ${menuButton.selector}` });
+
+    // Try clicking it to verify it opens
+    emit({ step: 'Testing mobile menu open...' });
+    try {
+      await page.click(menuButton.selector, { timeout: 3000 });
+      await page.waitForTimeout(1000);
+
+      const menuOpenShot = screenshotPath(store.newStore, 'mobile-responsiveness', '02_menu_open');
+      await page.screenshot({ path: menuOpenShot, fullPage: false });
+      emit({ screenshot: screenshotUrl(menuOpenShot), label: 'Mobile menu opened' });
+
+      // Check if menu content appeared
+      const menuContent = await page.evaluate(() => {
+        const navLinks = document.querySelectorAll('nav a, [class*="mobile-nav"] a, [class*="drawer"] a, [class*="menu-drawer"] a');
+        const visible = Array.from(navLinks).filter(el => {
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        });
+        return visible.length;
+      });
+
+      if (menuContent > 0) {
+        checks.push({ name: 'Mobile Menu Opens', ok: true, detail: `Menu opened with ${menuContent} visible links` });
+      } else {
+        checks.push({ name: 'Mobile Menu Opens', ok: false, detail: 'Menu button clicked but no nav links became visible' });
+      }
+
+      // Close it (click again or press Escape)
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(500);
+    } catch {
+      checks.push({ name: 'Mobile Menu Opens', ok: false, detail: 'Could not click menu button' });
+    }
+  } else {
+    checks.push({ name: 'Mobile Menu Button', ok: false, detail: 'No hamburger/menu button found at mobile viewport' });
+  }
+
+  // ── CHECK 2: Collection page at mobile ──
+  emit({ step: 'Loading collection page at mobile viewport...' });
+  await page.goto(`${origin}/collections/all`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const mobileCollShot = screenshotPath(store.newStore, 'mobile-responsiveness', '03_mobile_collection');
+  await page.screenshot({ path: mobileCollShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(mobileCollShot), label: 'Mobile collection page' });
+
+  // Check product grid isn't overflowing
+  const collOverflow = await page.evaluate(() => {
+    return document.body.scrollWidth > window.innerWidth + 5;
+  });
+  if (collOverflow) {
+    checks.push({ name: 'No Horizontal Overflow (Collections)', ok: false, detail: 'Collection page overflows horizontally on mobile' });
+  } else {
+    checks.push({ name: 'No Horizontal Overflow (Collections)', ok: true, detail: 'Collection page fits mobile viewport' });
+  }
+
+  // Check that product cards are visible and reasonably sized
+  const mobileProducts = await page.evaluate(() => {
+    const cards = document.querySelectorAll('a[href*="/products/"]');
+    let tooSmall = 0;
+    let visible = 0;
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        visible++;
+        // Tap target too small (WCAG recommends 44×44px minimum)
+        if (rect.width < 44 || rect.height < 44) tooSmall++;
+      }
+    }
+    return { visible, tooSmall };
+  });
+
+  if (mobileProducts.visible === 0) {
+    checks.push({ name: 'Mobile Product Cards', ok: false, detail: 'No product cards visible on mobile collection page' });
+  } else if (mobileProducts.tooSmall > 0) {
+    checks.push({ name: 'Mobile Tap Targets', ok: false, detail: `${mobileProducts.tooSmall}/${mobileProducts.visible} product links are smaller than 44×44px tap target` });
+  } else {
+    checks.push({ name: 'Mobile Product Cards', ok: true, detail: `${mobileProducts.visible} products visible with proper tap targets` });
+  }
+
+  // ── CHECK 3: Search at mobile ──
+  emit({ step: 'Testing search at mobile viewport...' });
+  const searchUrl = `${origin}/search?q=${encodeURIComponent('textbook')}`;
+  await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const mobileSearchShot = screenshotPath(store.newStore, 'mobile-responsiveness', '04_mobile_search');
+  await page.screenshot({ path: mobileSearchShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(mobileSearchShot), label: 'Mobile search results' });
+
+  const searchOverflow = await page.evaluate(() => {
+    return document.body.scrollWidth > window.innerWidth + 5;
+  });
+  if (searchOverflow) {
+    checks.push({ name: 'No Horizontal Overflow (Search)', ok: false, detail: 'Search results page overflows on mobile' });
+  } else {
+    checks.push({ name: 'No Horizontal Overflow (Search)', ok: true, detail: 'Search page fits mobile viewport' });
+  }
+
+  // ── CHECK 4: Cart page at mobile ──
+  emit({ step: 'Checking cart page at mobile viewport...' });
+  await page.goto(`${origin}/cart`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(1500);
+
+  const mobileCartShot = screenshotPath(store.newStore, 'mobile-responsiveness', '05_mobile_cart');
+  await page.screenshot({ path: mobileCartShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(mobileCartShot), label: 'Mobile cart page' });
+
+  const cartOverflow = await page.evaluate(() => {
+    return document.body.scrollWidth > window.innerWidth + 5;
+  });
+  if (cartOverflow) {
+    checks.push({ name: 'No Horizontal Overflow (Cart)', ok: false, detail: 'Cart page overflows on mobile' });
+  } else {
+    checks.push({ name: 'No Horizontal Overflow (Cart)', ok: true, detail: 'Cart page fits mobile viewport' });
+  }
+
+  // Restore desktop viewport for any subsequent tests
+  await page.setViewportSize({ width: 1920, height: 1080 });
+
+  const failed = checks.filter(c => !c.ok);
+  for (const c of checks) {
+    emit({ step: `${c.ok ? '✅' : '❌'} ${c.name}: ${c.detail}` });
+  }
+
+  return {
+    passed: failed.length === 0,
+    message: failed.length === 0
+      ? `All ${checks.length} mobile checks passed`
+      : `${failed.length}/${checks.length} failed: ${failed.map(f => f.name).join(', ')}`,
+    checks,
+  };
+}
+
+// ─── Rental & Purchase Options ────────────────────────────────────
+// Catches TMTST-4118 (rental selection not available), TMTST-3419
+// (rental agreement prompt issues)
+async function testRentalPurchaseOptions(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  const checks = [];
+
+  emit({ step: 'Searching for textbooks to check purchase/rental options...' });
+  const searchUrl = `${origin}/search?q=${encodeURIComponent('print new')}`;
+  await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const productLinks = await getVisibleProductLinks(page);
+  emit({ step: `Found ${productLinks.length} products in search results` });
+
+  if (productLinks.length === 0) {
+    return { passed: false, message: 'No products found in search — cannot check rental/purchase options' };
+  }
+
+  // Visit up to 3 products looking for purchase option selectors
+  let productsWithOptions = 0;
+  let productsWithRental = 0;
+  let productsChecked = 0;
+
+  for (let i = 0; i < Math.min(3, productLinks.length); i++) {
+    const href = productLinks[i];
+    const productUrl = href.startsWith('http') ? href : `${origin}${href}`;
+    emit({ step: `Checking product ${i + 1}: ${href.split('/').pop()}` });
+
+    await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(2000);
+    productsChecked++;
+
+    if (i === 0) {
+      const pdpShot = screenshotPath(store.newStore, 'rental-purchase-options', `01_product_${i}`);
+      await page.screenshot({ path: pdpShot, fullPage: false });
+      emit({ screenshot: screenshotUrl(pdpShot), label: `Product ${i + 1} - purchase options` });
+    }
+
+    const optionsAnalysis = await page.evaluate(() => {
+      const allText = document.body.innerText.toUpperCase();
+      const options = {
+        buyNew: false,
+        buyUsed: false,
+        rentNew: false,
+        rentUsed: false,
+        hasAnyOption: false,
+      };
+
+      // Look for option labels, radio buttons, or buttons
+      const elements = document.querySelectorAll('label, input[type="radio"], input[type="checkbox"], button, [class*="option"], [class*="variant"]');
+      for (const el of elements) {
+        const text = (el.textContent || el.value || '').toUpperCase().trim();
+        if (/BUY\s*NEW/i.test(text)) options.buyNew = true;
+        if (/BUY\s*USED/i.test(text)) options.buyUsed = true;
+        if (/RENT\s*NEW/i.test(text)) options.rentNew = true;
+        if (/RENT\s*USED/i.test(text)) options.rentUsed = true;
+      }
+
+      options.hasAnyOption = options.buyNew || options.buyUsed || options.rentNew || options.rentUsed;
+
+      // Also check if "Add to Bag" / "Add to Cart" button exists and is not disabled
+      const addBtn = document.querySelector('button:not([disabled])');
+      const addBtnText = addBtn ? (addBtn.textContent || '').toUpperCase() : '';
+      const hasAddButton = addBtnText.includes('ADD TO BAG') || addBtnText.includes('ADD TO CART');
+
+      return { ...options, hasAddButton };
+    });
+
+    if (optionsAnalysis.hasAnyOption) productsWithOptions++;
+    if (optionsAnalysis.rentNew || optionsAnalysis.rentUsed) productsWithRental++;
+
+    const optionList = [];
+    if (optionsAnalysis.buyNew) optionList.push('Buy New');
+    if (optionsAnalysis.buyUsed) optionList.push('Buy Used');
+    if (optionsAnalysis.rentNew) optionList.push('Rent New');
+    if (optionsAnalysis.rentUsed) optionList.push('Rent Used');
+    emit({ step: `  Options: ${optionList.length > 0 ? optionList.join(', ') : 'None detected'}` });
+  }
+
+  if (productsChecked === 0) {
+    checks.push({ name: 'Purchase Options', ok: false, detail: 'Could not check any products' });
+  } else if (productsWithOptions === 0) {
+    checks.push({ name: 'Purchase Options', ok: false, detail: `No Buy/Rent options found on ${productsChecked} textbook product(s)` });
+  } else {
+    checks.push({ name: 'Purchase Options', ok: true, detail: `${productsWithOptions}/${productsChecked} products have purchase options` });
+  }
+
+  if (productsWithRental > 0) {
+    checks.push({ name: 'Rental Available', ok: true, detail: `Rental option found on ${productsWithRental} product(s)` });
+  } else {
+    // Not a hard fail — some stores may not have rental
+    checks.push({ name: 'Rental Available', ok: true, detail: 'No rental options found (may not be enabled for this store)' });
+  }
+
+  const failed = checks.filter(c => !c.ok);
+  return {
+    passed: failed.length === 0,
+    message: failed.length === 0
+      ? `Purchase options verified on ${productsChecked} product(s)`
+      : `${failed.length} issue(s): ${failed.map(f => f.detail).join('; ')}`,
+    checks,
+  };
+}
+
+// ─── Price Filter Functionality ───────────────────────────────────
+// Catches TMTST-3415 (price filter checkbox not working on PLP/SRP)
+async function testPriceFilterFunctionality(page, store, emit) {
+  const origin = storeOrigin(store.newStore);
+  const checks = [];
+
+  emit({ step: 'Navigating to collection page to test filters...' });
+  await page.goto(`${origin}/collections/all`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForTimeout(2000);
+
+  const filterShot = screenshotPath(store.newStore, 'price-filter', '01_collection');
+  await page.screenshot({ path: filterShot, fullPage: false });
+  emit({ screenshot: screenshotUrl(filterShot), label: 'Collection page (pre-filter)' });
+
+  // Look for price filter elements
+  const filterAnalysis = await page.evaluate(() => {
+    // Common filter selectors in Shopify themes
+    const filterSelectors = [
+      'input[type="checkbox"][name*="price"], input[type="checkbox"][value*="price"]',
+      '[class*="filter"] input[type="checkbox"]',
+      '[data-filter] input[type="checkbox"]',
+      'details[class*="filter"] input',
+      '[class*="price-filter"] input',
+      '[class*="facet"] input[type="checkbox"]',
+    ];
+
+    let filterInputs = [];
+    for (const sel of filterSelectors) {
+      const inputs = document.querySelectorAll(sel);
+      if (inputs.length > 0) {
+        filterInputs = Array.from(inputs);
+        break;
+      }
+    }
+
+    // Also check for price range slider
+    const priceRange = document.querySelector(
+      'input[type="range"][name*="price"], [class*="price-range"], [class*="price-slider"]'
+    );
+
+    // Check for filter sidebar / drawer
+    const filterContainer = document.querySelector(
+      '[class*="filter"], [class*="facet"], [data-filter], aside'
+    );
+
+    return {
+      filterInputCount: filterInputs.length,
+      hasPriceRange: !!priceRange,
+      hasFilterContainer: !!filterContainer,
+      firstFilterText: filterInputs.length > 0
+        ? (filterInputs[0].closest('label') || filterInputs[0].parentElement)?.textContent?.trim().substring(0, 40)
+        : null,
+    };
+  });
+
+  emit({ step: `Filters: ${filterAnalysis.filterInputCount} checkbox inputs, price range: ${filterAnalysis.hasPriceRange}, filter container: ${filterAnalysis.hasFilterContainer}` });
+
+  if (filterAnalysis.filterInputCount > 0) {
+    // Try clicking the first filter checkbox
+    emit({ step: 'Testing filter checkbox interaction...' });
+
+    // Count products before filter
+    const productsBefore = await page.evaluate(() => {
+      return document.querySelectorAll('a[href*="/products/"]').length;
+    });
+
+    try {
+      // Click the first available filter checkbox
+      const clicked = await page.evaluate(() => {
+        const selectors = [
+          '[class*="filter"] input[type="checkbox"]',
+          '[data-filter] input[type="checkbox"]',
+          'details[class*="filter"] input[type="checkbox"]',
+          '[class*="facet"] input[type="checkbox"]',
+        ];
+        for (const sel of selectors) {
+          const input = document.querySelector(sel);
+          if (input) {
+            input.click();
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (clicked) {
+        await page.waitForTimeout(3000); // Wait for filter to apply
+
+        const afterShot = screenshotPath(store.newStore, 'price-filter', '02_filtered');
+        await page.screenshot({ path: afterShot, fullPage: false });
+        emit({ screenshot: screenshotUrl(afterShot), label: 'After filter applied' });
+
+        const productsAfter = await page.evaluate(() => {
+          return document.querySelectorAll('a[href*="/products/"]').length;
+        });
+
+        // Check URL changed (Shopify filters update URL)
+        const currentUrl = page.url();
+        const urlChanged = currentUrl.includes('filter') || currentUrl.includes('constraint');
+
+        if (productsAfter !== productsBefore || urlChanged) {
+          checks.push({ name: 'Filter Checkbox Works', ok: true, detail: `Products changed from ${productsBefore} to ${productsAfter}` });
+        } else {
+          checks.push({ name: 'Filter Checkbox Works', ok: false, detail: `Filter clicked but product count unchanged (${productsBefore})` });
+        }
+      } else {
+        checks.push({ name: 'Filter Checkbox Works', ok: false, detail: 'Could not click any filter checkbox' });
+      }
+    } catch (err) {
+      checks.push({ name: 'Filter Checkbox Works', ok: false, detail: `Filter interaction failed: ${err.message}` });
+    }
+  } else if (filterAnalysis.hasPriceRange) {
+    checks.push({ name: 'Price Filter Present', ok: true, detail: 'Price range slider found (checkbox test skipped)' });
+  } else if (filterAnalysis.hasFilterContainer) {
+    checks.push({ name: 'Filter Container', ok: true, detail: 'Filter container found but no checkbox/range inputs detected' });
+  } else {
+    checks.push({ name: 'Filters Present', ok: false, detail: 'No filter UI found on collection page' });
+  }
+
+  const failed = checks.filter(c => !c.ok);
+  for (const c of checks) {
+    emit({ step: `${c.ok ? '✅' : '❌'} ${c.name}: ${c.detail}` });
+  }
+
+  return {
+    passed: failed.length === 0,
+    message: failed.length === 0
+      ? 'Price/collection filters working'
+      : `Filter issue: ${failed.map(f => f.detail).join('; ')}`,
+    checks,
+  };
+}
+
 // Sorts collection by price ascending and flags any product under $1
 // (almost always a misconfigured OOS variant).  Catches CSV: #46
 async function testPriceFloorScan(page, store, emit) {
