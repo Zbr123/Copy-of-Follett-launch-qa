@@ -28,7 +28,6 @@ function safeJobId(...parts) {
 const app = express();
 const PORT = process.env.PORT || 3847;
 const REMOTE_BROWSER_ENABLED = process.env.REMOTE_BROWSER_ENABLED === '1';
-console.log(`[boot] REMOTE_BROWSER_ENABLED=${REMOTE_BROWSER_ENABLED}, BROWSER_WS_URL=${process.env.BROWSER_WS_URL ? 'SET' : 'NOT SET'}, DATA_DIR=${DATA_DIR}`);
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -37,6 +36,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // /app/data can persist runs, screenshots, sweeps, and the chromium
 // profile across redeploys. Defaults to __dirname for local dev.
 const DATA_DIR = process.env.DATA_DIR || __dirname;
+console.log(`[boot] REMOTE_BROWSER_ENABLED=${REMOTE_BROWSER_ENABLED}, BROWSER_WS_URL=${process.env.BROWSER_WS_URL ? 'SET' : 'NOT SET'}, DATA_DIR=${DATA_DIR}`);
 const SCREENSHOTS_DIR = path.join(DATA_DIR, 'screenshots');
 if (!fs.existsSync(SCREENSHOTS_DIR)) fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 app.use('/screenshots', express.static(SCREENSHOTS_DIR));
