@@ -1981,7 +1981,7 @@
             <span style="color:${statusColor};font-size:12px;font-weight:600;text-transform:uppercase;">${s.status}</span>
             ${s.status === 'running' ? `<button onclick="sweepAction('${s.id}','pause')" style="background:none;border:1px solid #333;border-radius:6px;color:#ff9f0a;font-size:11px;padding:4px 10px;cursor:pointer;">Pause</button>` : ''}
             ${s.status === 'paused' ? `<button onclick="sweepAction('${s.id}','resume')" style="background:none;border:1px solid #333;border-radius:6px;color:#30d158;font-size:11px;padding:4px 10px;cursor:pointer;">Resume</button>` : ''}
-            ${s.status === 'complete' ? `<button onclick="downloadSweepReport('${s.id}')" style="background:none;border:1px solid #333;border-radius:6px;color:#64d2ff;font-size:11px;padding:4px 10px;cursor:pointer;">PDF Report</button>` : ''}
+            ${s.status !== 'pending' ? `<button onclick="downloadSweepReport('${s.id}')" style="background:none;border:1px solid #333;border-radius:6px;color:#64d2ff;font-size:11px;padding:4px 10px;cursor:pointer;">Export CSV</button>` : ''}
             <button onclick="sweepAction('${s.id}','delete')" style="background:none;border:1px solid #333;border-radius:6px;color:#ff453a;font-size:11px;padding:4px 10px;cursor:pointer;">Delete</button>
           </div>
         </div>
@@ -2009,17 +2009,18 @@
 
     async function downloadSweepReport(id) {
       try {
-        const resp = await fetch(`/api/sweeps/${id}/pdf`);
-        if (!resp.ok) throw new Error('PDF generation failed');
-        const blob = await resp.blob();
+        const resp = await fetch(`/api/sweeps/${id}/csv`);
+        if (!resp.ok) throw new Error('Export failed');
+        const text = await resp.text();
+        const blob = new Blob([text], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `Sweep-Report-${id.slice(0,16)}.pdf`;
+        a.download = `Follett-Sweep-${id.slice(0,16)}.csv`;
         a.click();
         URL.revokeObjectURL(url);
       } catch (err) {
-        alert('Report failed: ' + err.message);
+        alert('Export failed: ' + err.message);
       }
     }
 

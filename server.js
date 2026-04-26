@@ -762,13 +762,11 @@ app.get('/api/runs/:id/pdf', async (req, res) => {
 
   let browser;
   try {
-    if (REMOTE_BROWSER_ENABLED && process.env.BROWSER_WS_URL) {
-      browser = await chromium.connectOverCDP(process.env.BROWSER_WS_URL);
-    } else {
-      browser = await chromium.launch({ headless: true });
-    }
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+    const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle' });
     const pdfBuffer = await page.pdf({
       format: 'A4',
@@ -776,7 +774,6 @@ app.get('/api/runs/:id/pdf', async (req, res) => {
       printBackground: true,
       preferCSSPageSize: false,
     });
-    await context.close();
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="Follett-QA-Report-${req.params.id.slice(0,10)}.pdf"`);
     res.send(pdfBuffer);
@@ -1274,126 +1271,52 @@ app.post('/api/sweeps/:id/resume', (req, res) => {
   res.json(sweep);
 });
 
-// Aggregate PDF for an entire sweep — only available when status === 'complete'.
-// Rolls up every item's individual runs/{runId}.json into a single report
-// via the existing buildPdfHtml helper.
-app.get('/api/sweeps/:id/pdf', async (req, res) => {
+// CSV export for a sweep — available even while running (exports what's done so far).
+app.get('/api/sweeps/:id/csv', (req, res) => {
   const sweep = sweepWorker.getSweep(req.params.id);
   if (!sweep) return res.status(404).json({ error: 'Sweep not found' });
-  if (sweep.status !== 'complete') {
-    return res.status(409).json({ error: 'Sweep is not complete yet' });
-  }
 
-  // Gather results from every item's run file
-  const results = [];
-  const cfBlockedStores = new Set();
-  const screenshotCache = {};
+  const csvEscape = (val) => {
+    const s = String(val || '').replace(/"/g, '""');
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s}"` : s;
+  };
+
+  const rows = [['Store', 'Test', 'Status', 'Message', 'Timestamp'].join(',')];
 
   for (const item of sweep.items) {
-    if (item.status === 'cf-blocked') cfBlockedStores.add(item.url);
+    if (item.status === 'cf-blocked') {
+      rows.push([csvEscape(item.url), 'ALL', 'CF-BLOCKED', 'Cloudflare challenge could not be bypassed', csvEscape(item.completedAt || '')].join(','));
+      continue;
+    }
+    if (item.status === 'error') {
+      rows.push([csvEscape(item.url), 'ALL', 'ERROR', csvEscape(item.message), csvEscape(item.completedAt || '')].join(','));
+      continue;
+    }
+    if (item.status === 'pending' || item.status === 'running') {
+      rows.push([csvEscape(item.url), 'ALL', item.status.toUpperCase(), '', ''].join(','));
+      continue;
+    }
     if (!item.runId) continue;
 
     const runFile = path.join(RUNS_DIR, `${item.runId}.json`);
     if (!fs.existsSync(runFile)) continue;
     let runData;
-    try {
-      runData = JSON.parse(fs.readFileSync(runFile, 'utf8'));
-    } catch (_) { continue; }
+    try { runData = JSON.parse(fs.readFileSync(runFile, 'utf8')); } catch (_) { continue; }
 
     for (const r of (runData.results || [])) {
-      results.push({
-        store: r.store,
-        testId: r.testId,
-        testName: r.testId,
-        passed: r.passed,
-        message: r.message,
-        checks: r.checks || [],
-        screenshots: r.screenshots || [],
-        steps: [],
-      });
-
-      // Inline screenshots as base64
-      for (const s of (r.screenshots || [])) {
-        if (s.src && !screenshotCache[s.src]) {
-          try {
-            const filePath = path.join(DATA_DIR, s.src.replace(/^\//, ''));
-            if (fs.existsSync(filePath)) {
-              const buf = fs.readFileSync(filePath);
-              screenshotCache[s.src] = `data:image/png;base64,${buf.toString('base64')}`;
-            }
-          } catch (_) {}
-        }
-      }
+      rows.push([
+        csvEscape(r.store),
+        csvEscape(r.testId),
+        r.passed ? 'PASSED' : 'FAILED',
+        csvEscape(r.message),
+        csvEscape(r.timestamp || item.completedAt || ''),
+      ].join(','));
     }
   }
 
-  // Ensure CF-blocked stores with no results still appear in the report
-  // (their items never wrote a runs file, or did so before being marked blocked).
-  for (const url of cfBlockedStores) {
-    if (!results.some(r => r.store === url)) {
-      results.push({
-        store: url,
-        testId: 'storefront-login',
-        testName: 'Storefront Login',
-        passed: false,
-        message: 'Cloudflare challenge could not be bypassed — store was not tested.',
-        checks: [],
-        screenshots: [],
-        steps: [],
-      });
-    }
-  }
-
-  const totalTests = results.length;
-  const passedTests = results.filter(r => r.passed).length;
-  const failedTests = totalTests - passedTests;
-
-  let logoBase64 = '';
-  try {
-    const logoBuf = fs.readFileSync(path.join(__dirname, 'public', 'p3-logo.png'));
-    logoBase64 = `data:image/png;base64,${logoBuf.toString('base64')}`;
-  } catch (_) {}
-
-  const started = new Date(sweep.createdAt);
-  const dateStr = started.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const timeStr = started.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-
-  const groups = {};
-  results.forEach(r => { (groups[r.store] = groups[r.store] || []).push(r); });
-  const storeCount = Object.keys(groups).length;
-
-  const html = buildPdfHtml({
-    logoBase64, results, groups, totalTests, passedTests, failedTests,
-    storeCount, dateStr, timeStr, screenshotCache,
-    cfBlockedStores,
-    reportTitle: 'Sweep Report',
-  });
-
-  let browser;
-  try {
-    if (REMOTE_BROWSER_ENABLED && process.env.BROWSER_WS_URL) {
-      browser = await chromium.connectOverCDP(process.env.BROWSER_WS_URL);
-    } else {
-      browser = await chromium.launch({ headless: true });
-    }
-    const context = await browser.newContext();
-    const page = await context.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle' });
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
-      printBackground: true,
-    });
-    await context.close();
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="Follett-Sweep-Report-${sweep.id}.pdf"`);
-    res.send(pdfBuffer);
-  } catch (err) {
-    console.error('[sweep-pdf] Generation failed:', err.message);
-    res.status(500).json({ error: err.message });
-  } finally {
-    if (browser) await browser.close().catch(() => {});
-  }
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="Follett-Sweep-${sweep.id.slice(0,16)}.csv"`);
+  res.send(rows.join('\n'));
 });
 
 app.delete('/api/sweeps/:id', (req, res) => {
