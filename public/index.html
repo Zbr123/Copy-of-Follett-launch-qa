@@ -845,117 +845,6 @@
     }
     .diff-summary .diff-stat { display: flex; align-items: center; gap: 6px; }
 
-    /* ── Accessibility ── */
-    .ada-store-section { margin-bottom: 32px; }
-    .ada-store-title {
-      font-size: 20px; font-weight: 800; letter-spacing: -0.3px;
-      margin-bottom: 20px; display: flex; align-items: center; gap: 12px;
-    }
-    .ada-page-card {
-      background: #111; border: 1px solid #222; border-radius: 12px;
-      margin-bottom: 16px; overflow: hidden;
-    }
-    .ada-page-header {
-      padding: 14px 18px; display: flex; align-items: center; gap: 12px;
-      border-bottom: 1px solid #222; cursor: pointer;
-    }
-    .ada-page-header:hover { background: #1a1a1a; }
-    .ada-page-name { font-size: 14px; font-weight: 700; flex: 1; }
-    .ada-page-url { font-size: 11px; color: #555; margin-left: 8px; font-weight: 400; }
-    .ada-summary-pills { display: flex; gap: 6px; }
-    .ada-pill {
-      font-size: 10px; font-weight: 700; padding: 3px 10px;
-      border-radius: 5px; text-transform: uppercase; letter-spacing: 0.3px;
-    }
-    .ada-pill.critical { background: #3a0a0a; color: #ff453a; }
-    .ada-pill.serious { background: #3a1a0a; color: #ff9f0a; }
-    .ada-pill.moderate { background: #3a2a0a; color: #ffd60a; }
-    .ada-pill.minor { background: #1a1a2a; color: #64d2ff; }
-    .ada-pill.passes { background: #0a2a0a; color: #30d158; }
-
-    .ada-page-body { padding: 18px; display: none; }
-    .ada-page-card.expanded .ada-page-body { display: block; }
-
-    .ada-violation {
-      border: 1px solid #222; border-radius: 10px; margin-bottom: 12px;
-      overflow: hidden;
-    }
-    .ada-violation-header {
-      padding: 12px 16px; display: flex; align-items: flex-start; gap: 12px;
-      background: #0a0a0a; cursor: pointer;
-    }
-    .ada-violation-header:hover { background: #111; }
-    .ada-impact {
-      font-size: 9px; font-weight: 800; padding: 3px 8px; border-radius: 4px;
-      text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0; margin-top: 2px;
-    }
-    .ada-impact.critical { background: #ff453a; color: #fff; }
-    .ada-impact.serious { background: #ff9f0a; color: #000; }
-    .ada-impact.moderate { background: #ffd60a; color: #000; }
-    .ada-impact.minor { background: #64d2ff; color: #000; }
-
-    .ada-violation-info { flex: 1; }
-    .ada-violation-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
-    .ada-violation-desc { font-size: 12px; color: #86868b; line-height: 1.5; }
-    .ada-violation-count {
-      font-size: 11px; color: #86868b; font-weight: 600;
-      flex-shrink: 0; margin-top: 2px;
-    }
-
-    .ada-violation-body { display: none; padding: 16px; border-top: 1px solid #222; }
-    .ada-violation.expanded .ada-violation-body { display: block; }
-
-    .ada-fix-box {
-      background: #0a1a0a; border: 1px solid #1a3a1a; border-radius: 8px;
-      padding: 12px 16px; margin-bottom: 14px;
-    }
-    .ada-fix-title {
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.5px; color: #30d158; margin-bottom: 6px;
-    }
-    .ada-fix-text { font-size: 12px; color: #a0d8a0; line-height: 1.6; }
-
-    .ada-wcag-tags { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
-    .ada-wcag-tag {
-      font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 4px;
-      background: #1a1a2a; color: #86868b; text-transform: uppercase; letter-spacing: 0.3px;
-    }
-
-    .ada-node {
-      background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 6px;
-      padding: 10px 14px; margin-bottom: 8px;
-    }
-    .ada-node-label {
-      font-size: 9px; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.5px; color: #555; margin-bottom: 4px;
-    }
-    .ada-node-html {
-      font-size: 11px; font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-      color: #ff9f0a; word-break: break-all; line-height: 1.5;
-    }
-    .ada-node-selector {
-      font-size: 11px; font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-      color: #64d2ff; word-break: break-all;
-    }
-    .ada-node-fix {
-      font-size: 11px; color: #86868b; line-height: 1.5; margin-top: 6px;
-    }
-
-    .ada-help-link {
-      display: inline-block; margin-top: 10px; font-size: 11px;
-      color: #58a6ff; text-decoration: none;
-    }
-    .ada-help-link:hover { text-decoration: underline; }
-
-    .ada-total-summary {
-      display: flex; gap: 16px; padding: 20px;
-      background: #111; border: 1px solid #222; border-radius: 12px;
-      margin-bottom: 24px; align-items: center;
-    }
-    .ada-total-stat { text-align: center; }
-    .ada-total-stat .num { font-size: 28px; font-weight: 800; letter-spacing: -1px; }
-    .ada-total-stat .lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #86868b; font-weight: 700; margin-top: 2px; }
-
     /* ── Scrollbar ── */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -1048,13 +937,6 @@
       .dash-stores-table td {
         padding: 8px 10px;
         font-size: 12px;
-      }
-      /* ADA */
-      .ada-summary-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .ada-violations-list .ada-node {
-        padding: 10px;
       }
     }
 
@@ -1190,18 +1072,6 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      /* ADA */
-      .ada-summary-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 6px;
-      }
-      .ada-total-stat .num {
-        font-size: 22px;
-      }
-      .ada-node-html,
-      .ada-node-selector {
-        font-size: 11px;
-      }
     }
   </style>
 </head>
@@ -1216,7 +1086,7 @@
     <div class="nav-tabs">
       <button class="nav-tab active" onclick="switchView('runner')">Run Tests</button>
       <button class="nav-tab" onclick="switchView('dashboard')">Dashboard</button>
-      <button class="nav-tab" onclick="switchView('accessibility')">Accessibility</button>
+      <button class="nav-tab" onclick="switchView('sweep')">Sweep</button>
     </div>
     <div class="nav-right" id="clockDisplay"></div>
   </nav>
@@ -1363,32 +1233,30 @@
     </div>
   </div>
 
-  <!-- Accessibility View -->
-  <div class="container" id="accessibilityView" style="display:none">
+  <!-- Sweep View -->
+  <div class="container" id="sweepView" style="display:none">
     <div class="step-section">
       <div class="step-header">
-        <h2>Accessibility. <span>WCAG 2.1 AA compliance audit.</span></h2>
+        <h2>Sweep. <span>Batch-test up to 50 stores unattended.</span></h2>
       </div>
 
-      <!-- Store input for ADA scan -->
-      <div class="ada-input-section">
-        <div style="background:#ff453a18;border:1px solid #ff453a44;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#ff6961;line-height:1.5;">
-          <strong style="color:#ff453a;">⚠ Important:</strong> Paste the <strong>Preview link</strong> from Shopify Admin. Go to <strong>Sales Channel → Online Store → ⋯ → Right Click → Copy "Preview" link</strong>.
-        </div>
-        <div id="adaStoreRows"></div>
-        <button class="btn-add-store" onclick="addAdaStoreRow()">+ Add Store</button>
+      <div style="background:#30d15818;border:1px solid #30d15844;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#86868b;line-height:1.5;">
+        Paste one Shopify Preview URL per line. The sweep will run <strong style="color:#fff" id="sweepConcLabel">5</strong> stores concurrently using all selected tests from the Run Tests tab. Results and PDF reports appear below as stores complete.
       </div>
 
-      <div class="run-section" style="display:flex;gap:12px;align-items:center;margin-top:24px;">
-        <button class="btn-run" id="adaRunBtn" onclick="runAdaScan()">
-          <span class="spinner"></span>
-          <span class="run-label">Run Accessibility Audit</span>
-          <span class="running-label">Scanning...</span>
+      <div style="margin-bottom:16px;">
+        <label style="font-size:13px;color:#86868b;display:block;margin-bottom:6px;">Preview URLs (one per line)</label>
+        <textarea id="sweepUrls" rows="8" style="width:100%;background:#111;border:1px solid #333;border-radius:8px;color:#fff;padding:12px;font-family:monospace;font-size:13px;resize:vertical;" placeholder="https://bkstr-0993.myshopify.com/?preview_theme_id=...&#10;https://bkstr-1012.myshopify.com/?preview_theme_id=...&#10;https://bkstr-1785.myshopify.com/?preview_theme_id=..."></textarea>
+      </div>
+
+      <div style="display:flex;gap:12px;align-items:center;">
+        <button class="btn-run" id="sweepBtn" onclick="startSweep()" style="margin-left:auto;">
+          <span class="run-label">Start Sweep</span>
         </button>
       </div>
 
-      <!-- ADA Results -->
-      <div id="adaResults" style="margin-top:32px;"></div>
+      <!-- Sweep Queue -->
+      <div id="sweepQueue" style="margin-top:32px;"></div>
     </div>
   </div>
 
@@ -2020,230 +1888,133 @@
       document.body.removeChild(a);
     }
 
-    /* ── Accessibility Scanner ── */
-    let adaStoreCounter = 0;
-    function addAdaStoreRow(url = '') {
-      adaStoreCounter++;
-      const container = document.getElementById('adaStoreRows');
-      const card = document.createElement('div');
-      card.className = 'store-card';
-      card.innerHTML = `
-        <div class="store-card-top">
-          <div class="store-card-label">Store ${adaStoreCounter}</div>
-          <button class="btn-remove" onclick="this.closest('.store-card').remove()">&times;</button>
-        </div>
-        <div class="store-fields">
-          <div class="field" style="flex:1;">
-            <label>Shopify Preview URL</label>
-            <input type="text" placeholder="https://store-name.myshopify.com/?preview_theme_id=..." value="${url}" class="store-url" />
-          </div>
-        </div>`;
-      container.appendChild(card);
+    /* ── Sweep ── */
+    let sweepPollHandle = null;
+
+    function startSweepPolling() {
+      stopSweepPolling();
+      sweepPollHandle = setInterval(loadSweeps, 10000);
+    }
+    function stopSweepPolling() {
+      if (sweepPollHandle) { clearInterval(sweepPollHandle); sweepPollHandle = null; }
     }
 
-    function getAdaStores() {
-      const rows = document.querySelectorAll('#adaStoreRows .store-card');
-      const stores = [];
-      rows.forEach(row => {
-        const url = row.querySelector('.store-url').value.trim();
-        if (url) stores.push({ newStore: url, password: '' });
-      });
-      return stores;
-    }
+    async function startSweep() {
+      const urls = document.getElementById('sweepUrls').value
+        .split('\n').map(l => l.trim()).filter(Boolean);
 
-    let adaResults = {};
+      if (!urls.length) { alert('Paste at least one URL.'); return; }
+      if (!selectedTests.size) { alert('Select at least one test in the Run Tests tab first.'); return; }
 
-    async function runAdaScan() {
-      const stores = getAdaStores();
-      if (!stores.length) return alert('Add at least one store');
-
-      const btn = document.getElementById('adaRunBtn');
+      const btn = document.getElementById('sweepBtn');
       btn.disabled = true;
-      btn.classList.add('running');
-      document.getElementById('adaResults').innerHTML = '';
-      adaResults = {};
-
       try {
-        const response = await fetch('/api/accessibility-scan', {
+        const resp = await fetch('/api/sweeps', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stores }),
+          body: JSON.stringify({ urls, tests: [...selectedTests] }),
         });
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop();
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const data = JSON.parse(line.slice(6));
-
-            switch (data.type) {
-              case 'ada-store-start':
-                adaResults[data.store] = { pages: [], el: null };
-                const storeEl = document.createElement('div');
-                storeEl.className = 'ada-store-section';
-                storeEl.innerHTML = `<div class="ada-store-title"><span class="status-dot" style="background:#ff9f0a;width:10px;height:10px;border-radius:50%;"></span>${truncateUrl(data.store)}<span style="font-size:12px;color:#86868b;font-weight:400;"> — scanning...</span></div>`;
-                document.getElementById('adaResults').appendChild(storeEl);
-                adaResults[data.store].el = storeEl;
-                break;
-
-              case 'ada-page-result': {
-                const store = adaResults[data.store];
-                if (!store) break;
-                store.pages.push(data);
-                const pageCard = renderAdaPageCard(data);
-                store.el.appendChild(pageCard);
-                break;
-              }
-
-              case 'ada-store-complete': {
-                const store = adaResults[data.store];
-                if (!store) break;
-                const totalViolations = store.pages.reduce((sum, p) => sum + (p.summary?.total || 0), 0);
-                const totalCritical = store.pages.reduce((sum, p) => sum + (p.summary?.critical || 0), 0);
-                const titleEl = store.el.querySelector('.ada-store-title');
-                const dotColor = totalCritical > 0 ? '#ff453a' : totalViolations > 0 ? '#ff9f0a' : '#30d158';
-                titleEl.innerHTML = `<span style="background:${dotColor};width:10px;height:10px;border-radius:50%;display:inline-block;flex-shrink:0;"></span>${truncateUrl(data.store)}<span style="font-size:12px;color:#86868b;font-weight:400;"> — ${totalViolations} violations found</span>`;
-                break;
-              }
-
-              case 'ada-complete': {
-                // Show export button
-                const exportBar = document.createElement('div');
-                exportBar.className = 'export-bar show';
-                exportBar.innerHTML = `
-                  <div class="export-bar-text">Export Accessibility Report<small>Download detailed WCAG compliance report with remediation guidance.</small></div>
-                  <div class="export-buttons">
-                    <button class="btn-export btn-export-pdf" onclick="exportAdaPDF()">PDF Report</button>
-                    <button class="btn-export" onclick="exportAdaCSV()">CSV</button>
-                  </div>`;
-                document.getElementById('adaResults').insertBefore(exportBar, document.getElementById('adaResults').firstChild);
-                break;
-              }
-
-              case 'ada-error':
-                if (data.message) alert('Error: ' + data.message);
-                break;
-            }
-          }
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          alert(err.error || 'Failed to create sweep');
+        } else {
+          document.getElementById('sweepUrls').value = '';
+          await loadSweeps();
         }
-      } catch (err) {
-        alert('Scan error: ' + err.message);
+      } finally {
+        btn.disabled = false;
       }
-
-      btn.disabled = false;
-      btn.classList.remove('running');
     }
 
-    function renderAdaPageCard(data) {
-      const card = document.createElement('div');
-      card.className = 'ada-page-card' + (data.violations.length > 0 ? ' expanded' : '');
-
-      let pillsHtml = '';
-      if (data.summary.critical > 0) pillsHtml += `<span class="ada-pill critical">${data.summary.critical} Critical</span>`;
-      if (data.summary.serious > 0) pillsHtml += `<span class="ada-pill serious">${data.summary.serious} Serious</span>`;
-      if (data.summary.moderate > 0) pillsHtml += `<span class="ada-pill moderate">${data.summary.moderate} Moderate</span>`;
-      if (data.summary.minor > 0) pillsHtml += `<span class="ada-pill minor">${data.summary.minor} Minor</span>`;
-      if (data.summary.passes > 0) pillsHtml += `<span class="ada-pill passes">${data.summary.passes} Passed</span>`;
-
-      let violationsHtml = '';
-      data.violations.forEach((v, i) => {
-        const nodesHtml = v.nodes.map(n => `
-          <div class="ada-node">
-            ${n.screenshot ? `<div style="margin-bottom:8px;"><img src="${n.screenshot}" style="width:100%;border-radius:6px;border:1px solid #333;" onclick="document.getElementById('lightboxImg').src=this.src;document.getElementById('lightbox').classList.add('show');" /></div>` : ''}
-            <div class="ada-node-label">Element</div>
-            <div class="ada-node-html">${escHtml(n.html)}</div>
-            <div class="ada-node-label" style="margin-top:8px;">CSS Selector</div>
-            <div class="ada-node-selector">${escHtml(n.target)}</div>
-            ${n.failureSummary ? `<div class="ada-node-fix">${escHtml(n.failureSummary)}</div>` : ''}
-          </div>
-        `).join('');
-
-        const wcagTags = v.wcagTags.map(t => `<span class="ada-wcag-tag">${t}</span>`).join('');
-
-        violationsHtml += `
-        <div class="ada-violation${i < 3 ? ' expanded' : ''}">
-          <div class="ada-violation-header" onclick="this.parentElement.classList.toggle('expanded')">
-            <span class="ada-impact ${v.impact}">${v.impact}</span>
-            <div class="ada-violation-info">
-              <div class="ada-violation-title">${escHtml(v.help)}</div>
-              <div class="ada-violation-desc">${escHtml(v.description)}</div>
-            </div>
-            <span class="ada-violation-count">${v.nodes.length} instance${v.nodes.length !== 1 ? 's' : ''}</span>
-          </div>
-          <div class="ada-violation-body">
-            <div class="ada-fix-box">
-              <div class="ada-fix-title">How to Fix</div>
-              <div class="ada-fix-text">${escHtml(v.fixGuidance)}</div>
-            </div>
-            <div class="ada-wcag-tags">${wcagTags}</div>
-            <div class="ada-node-label" style="margin-bottom:8px;">Affected Elements (${v.nodes.length})</div>
-            ${nodesHtml}
-            <a class="ada-help-link" href="${v.helpUrl}" target="_blank" rel="noopener">Learn more about this rule &rarr;</a>
-          </div>
-        </div>`;
-      });
-
-      card.innerHTML = `
-        <div class="ada-page-header" onclick="this.parentElement.classList.toggle('expanded')">
-          <div class="ada-page-name">${data.page}<span class="ada-page-url">${truncateUrl(data.url || '')}</span></div>
-          <div class="ada-summary-pills">${pillsHtml}</div>
-        </div>
-        <div class="ada-page-body">
-          ${data.error ? `<div style="color:#ff453a;padding:12px;font-size:13px;">Error: ${escHtml(data.error)}</div>` : ''}
-          ${violationsHtml || '<div style="color:#30d158;padding:12px;font-size:14px;font-weight:600;">No violations found. This page passes all checked WCAG rules.</div>'}
-        </div>`;
-
-      return card;
-    }
-
-    async function exportAdaPDF() {
+    async function loadSweeps() {
       try {
-        const resp = await fetch('/api/accessibility-pdf', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ results: adaResults }),
-        });
+        const resp = await fetch('/api/sweeps');
+        const sweeps = await resp.json();
+        const details = await Promise.all(
+          sweeps.map(s => fetch(`/api/sweeps/${s.id}`).then(r => r.json()).catch(() => null))
+        );
+        renderSweeps(details.filter(Boolean));
+      } catch (_) {}
+    }
+
+    function renderSweeps(sweeps) {
+      const el = document.getElementById('sweepQueue');
+      if (!sweeps.length) {
+        el.innerHTML = '<div style="color:#555;font-size:14px;text-align:center;padding:32px 0;">No sweeps yet. Paste URLs above and click Start Sweep.</div>';
+        return;
+      }
+      el.innerHTML = sweeps.map(s => sweepCard(s)).join('');
+    }
+
+    function sweepCard(s) {
+      const total = s.items.length;
+      const counts = { pending: 0, running: 0, complete: 0, 'cf-blocked': 0, error: 0 };
+      s.items.forEach(i => counts[i.status] = (counts[i.status] || 0) + 1);
+      const done = counts.complete + counts['cf-blocked'] + counts.error;
+      const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+      const passed = s.items.reduce((sum, i) => sum + (i.passed || 0), 0);
+      const failed = s.items.reduce((sum, i) => sum + (i.failed || 0), 0);
+
+      const statusColor = s.status === 'complete' ? '#30d158' : s.status === 'paused' ? '#ff9f0a' : '#64d2ff';
+      const created = new Date(s.createdAt).toLocaleString();
+
+      let itemChips = s.items.map(i => {
+        const colors = { pending: '#333', running: '#64d2ff', complete: i.failed > 0 ? '#ff453a' : '#30d158', 'cf-blocked': '#ff9f0a', error: '#ff453a' };
+        const label = truncateUrl(i.url);
+        return `<span style="display:inline-block;padding:3px 8px;margin:2px;border-radius:4px;font-size:11px;background:${colors[i.status] || '#333'}22;border:1px solid ${colors[i.status] || '#333'}44;color:${colors[i.status] || '#aaa'};" title="${i.message || i.status}">${label} — ${i.status}${i.status === 'complete' ? ` (${i.passed}✓ ${i.failed}✗)` : ''}</span>`;
+      }).join('');
+
+      return `
+      <div style="background:#111;border:1px solid #222;border-radius:12px;padding:20px;margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <div>
+            <span style="font-size:16px;font-weight:700;color:#fff;">${total} stores</span>
+            <span style="font-size:12px;color:#86868b;margin-left:8px;">${created}</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span style="color:${statusColor};font-size:12px;font-weight:600;text-transform:uppercase;">${s.status}</span>
+            ${s.status === 'running' ? `<button onclick="sweepAction('${s.id}','pause')" style="background:none;border:1px solid #333;border-radius:6px;color:#ff9f0a;font-size:11px;padding:4px 10px;cursor:pointer;">Pause</button>` : ''}
+            ${s.status === 'paused' ? `<button onclick="sweepAction('${s.id}','resume')" style="background:none;border:1px solid #333;border-radius:6px;color:#30d158;font-size:11px;padding:4px 10px;cursor:pointer;">Resume</button>` : ''}
+            ${s.status === 'complete' ? `<button onclick="downloadSweepReport('${s.id}')" style="background:none;border:1px solid #333;border-radius:6px;color:#64d2ff;font-size:11px;padding:4px 10px;cursor:pointer;">PDF Report</button>` : ''}
+            <button onclick="sweepAction('${s.id}','delete')" style="background:none;border:1px solid #333;border-radius:6px;color:#ff453a;font-size:11px;padding:4px 10px;cursor:pointer;">Delete</button>
+          </div>
+        </div>
+        <div style="background:#222;border-radius:6px;height:8px;overflow:hidden;margin-bottom:12px;">
+          <div style="background:${statusColor};height:100%;width:${pct}%;transition:width 0.5s;"></div>
+        </div>
+        <div style="display:flex;gap:16px;font-size:13px;color:#86868b;margin-bottom:12px;">
+          <span>${pct}% done</span>
+          <span style="color:#30d158;">${passed} passed</span>
+          <span style="color:#ff453a;">${failed} failed</span>
+          <span>${counts.running} running</span>
+          <span>${counts.pending} pending</span>
+        </div>
+        <div style="line-height:1.8;">${itemChips}</div>
+      </div>`;
+    }
+
+    async function sweepAction(id, action) {
+      if (action === 'delete' && !confirm('Delete this sweep?')) return;
+      const method = action === 'delete' ? 'DELETE' : 'POST';
+      const url = action === 'delete' ? `/api/sweeps/${id}` : `/api/sweeps/${id}/${action}`;
+      await fetch(url, { method });
+      await loadSweeps();
+    }
+
+    async function downloadSweepReport(id) {
+      try {
+        const resp = await fetch(`/api/sweeps/${id}/pdf`);
         if (!resp.ok) throw new Error('PDF generation failed');
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `Accessibility-Audit-${new Date().toISOString().slice(0,10)}.pdf`;
+        a.download = `Sweep-Report-${id.slice(0,16)}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
       } catch (err) {
-        alert('PDF generation failed: ' + err.message);
+        alert('Report failed: ' + err.message);
       }
-    }
-
-    function exportAdaCSV() {
-      const esc = s => `"${String(s || '').replace(/"/g, '""')}"`;
-      const rows = ['Store,Page,Impact,Rule,Description,How to Fix,Element HTML,CSS Selector,WCAG Tags'];
-
-      for (const [store, data] of Object.entries(adaResults)) {
-        for (const page of (data.pages || [])) {
-          for (const v of (page.violations || [])) {
-            for (const n of (v.nodes || [])) {
-              rows.push([
-                esc(truncateUrl(store)), esc(page.page), v.impact?.toUpperCase(),
-                esc(v.help), esc(v.description), esc(v.fixGuidance),
-                esc(n.html), esc(n.target), esc((v.wcagTags || []).join(', ')),
-              ].join(','));
-            }
-          }
-        }
-      }
-      downloadFile(rows.join('\n'), 'accessibility-audit.csv', 'text/csv');
     }
 
     function escHtml(s) {
@@ -2399,9 +2170,9 @@
       document.querySelector(`.nav-tab[onclick*="${view}"]`).classList.add('active');
       document.getElementById('runnerView').style.display = view === 'runner' ? 'block' : 'none';
       document.getElementById('dashboardView').style.display = view === 'dashboard' ? 'block' : 'none';
-      document.getElementById('accessibilityView').style.display = view === 'accessibility' ? 'block' : 'none';
+      document.getElementById('sweepView').style.display = view === 'sweep' ? 'block' : 'none';
       if (view === 'dashboard') loadRunHistory();
-      if (view === 'accessibility' && !document.getElementById('adaStoreRows').children.length) addAdaStoreRow();
+      if (view === 'sweep') { loadSweeps(); startSweepPolling(); } else { stopSweepPolling(); }
     }
 
     /* ── Dashboard ── */

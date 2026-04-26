@@ -44,6 +44,35 @@ app.use('/screenshots', express.static(SCREENSHOTS_DIR));
 const RUNS_DIR = path.join(DATA_DIR, 'runs');
 if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR, { recursive: true });
 
+// ── Migrate old data from __dirname to DATA_DIR (Railway one-time fix) ──
+if (DATA_DIR !== __dirname) {
+  const migrate = (subdir) => {
+    const oldDir = path.join(__dirname, subdir);
+    const newDir = path.join(DATA_DIR, subdir);
+    if (!fs.existsSync(oldDir)) return;
+    if (!fs.existsSync(newDir)) fs.mkdirSync(newDir, { recursive: true });
+    try {
+      const files = fs.readdirSync(oldDir);
+      let moved = 0;
+      for (const f of files) {
+        const src = path.join(oldDir, f);
+        const dest = path.join(newDir, f);
+        if (!fs.existsSync(dest) && fs.statSync(src).isFile()) {
+          fs.copyFileSync(src, dest);
+          fs.unlinkSync(src);
+          moved++;
+        }
+      }
+      if (moved) console.log(`[migrate] Moved ${moved} files from ${oldDir} → ${newDir}`);
+    } catch (err) {
+      console.error(`[migrate] Error migrating ${subdir}:`, err.message);
+    }
+  };
+  migrate('runs');
+  migrate('screenshots');
+  migrate('sweeps');
+}
+
 // ── SSE endpoint for real-time test results ──
 // Flow:
 //   1. Create a runId and initial run record (stored as JSON on disk).

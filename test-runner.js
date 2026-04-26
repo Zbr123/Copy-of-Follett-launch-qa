@@ -676,7 +676,7 @@ async function testRentalCollateral(page, store, emit) {
   await page.waitForTimeout(500);
 
   // Step 1: Navigate directly to search results (more reliable than UI interaction)
-  const searchUrl = `${origin}/search?q=${encodeURIComponent('rent new')}`;
+  const searchUrl = `${origin}/search?q=${encodeURIComponent('print new')}`;
   emit({ step: `Navigating to search: ${searchUrl}` });
   await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);

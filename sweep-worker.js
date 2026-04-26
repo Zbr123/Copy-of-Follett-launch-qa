@@ -44,8 +44,11 @@ const BROWSER_OPTIONS = {
   headful: process.env.SWEEP_BROWSER_HEADFUL === '1',
 };
 
+// Max concurrent stores — each gets its own Bright Data browser session.
+const MAX_CONCURRENT = parseInt(process.env.WORKER_CONCURRENCY || '5', 10);
+
 let state = { sweeps: [] };
-let isRunning = false;   // only one sweep item processes globally at a time
+let activeCount = 0;     // how many items are currently processing
 let tickHandle = null;
 
 // ─── Persistence ────────────────────────────────────────────────────
@@ -113,12 +116,12 @@ function createSweep({ urls, tests, storesPerHour, jitterPct }) {
     id,
     createdAt: new Date().toISOString(),
     tests: tests.slice(),
+    concurrency: MAX_CONCURRENT,
     pacing: {
       storesPerHour: storesPerHour || DEFAULT_STORES_PER_HOUR,
       jitterPct: jitterPct == null ? DEFAULT_JITTER_PCT : jitterPct,
     },
     status: 'running',
-    nextEligibleAt: new Date().toISOString(), // first item runs immediately
     items: cleanUrls.map(url => ({
       url,
       status: 'pending',
@@ -181,52 +184,52 @@ function start() {
 }
 
 async function tick() {
-  if (isRunning) return;
-
+  // Fill available slots — launch as many items as we can up to MAX_CONCURRENT.
+  // Each item runs in its own Bright Data browser session, so they're fully
+  // independent and don't block each other.
   const now = Date.now();
-  // An item is eligible if it's pending AND either has no retryAfter
-  // set or its retryAfter has passed. CF-blocked items being re-queued
-  // use retryAfter to enforce a cooldown before the next attempt.
+
   const isEligibleItem = i =>
     i.status === 'pending' &&
     (!i.retryAfter || new Date(i.retryAfter).getTime() <= now);
 
-  const sweep = state.sweeps.find(s =>
-    s.status === 'running' &&
-    new Date(s.nextEligibleAt).getTime() <= now &&
-    s.items.some(isEligibleItem)
-  );
-  if (!sweep) return;
+  while (activeCount < MAX_CONCURRENT) {
+    const sweep = state.sweeps.find(s =>
+      s.status === 'running' &&
+      s.items.some(isEligibleItem)
+    );
+    if (!sweep) break;
 
-  const item = sweep.items.find(isEligibleItem);
-  if (!item) return;
+    const item = sweep.items.find(isEligibleItem);
+    if (!item) break;
 
-  isRunning = true;
-  try {
-    await processItem(sweep, item);
-  } catch (err) {
-    console.error('[sweep-worker] Unhandled error processing item:', err);
-    item.status = 'error';
-    item.message = String(err.message || err);
-    item.completedAt = new Date().toISOString();
+    // Mark running immediately so the next loop iteration skips it
+    item.status = 'running';
+    item.startedAt = new Date().toISOString();
+    activeCount++;
     persist();
-  } finally {
-    // Compute next eligibility based on pacing, independent of item success.
-    scheduleNext(sweep);
-    finalizeIfDone(sweep);
-    persist();
-    isRunning = false;
-    // If the sweep has more items AND nextEligibleAt is already past,
-    // the setInterval will pick it up on its own. No recursive kick.
+
+    // Fire and forget — each item settles itself
+    processItem(sweep, item)
+      .catch(err => {
+        console.error('[sweep-worker] Unhandled error processing item:', err);
+        item.status = 'error';
+        item.message = String(err.message || err);
+        item.completedAt = new Date().toISOString();
+      })
+      .finally(() => {
+        activeCount--;
+        finalizeIfDone(sweep);
+        persist();
+        // Immediately try to fill the freed slot
+        setImmediate(tick);
+      });
   }
 }
 
 async function processItem(sweep, item) {
-  item.status = 'running';
-  item.startedAt = new Date().toISOString();
-  persist();
-
-  const runId = new Date().toISOString().replace(/[:.]/g, '-');
+  // item.status and item.startedAt are set by tick() before calling us.
+  const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 6)}`;
   const runFile = path.join(RUNS_DIR, `${runId}.json`);
   const runData = {
     id: runId,
@@ -332,13 +335,10 @@ function applyCfOutcome(item) {
   }
 }
 
-function scheduleNext(sweep) {
-  const base = 3_600_000 / Math.max(0.1, sweep.pacing.storesPerHour);
-  const jitter = sweep.pacing.jitterPct || 0;
-  const factor = 1 + (Math.random() * 2 - 1) * jitter;
-  const delay = Math.max(5_000, Math.floor(base * factor));
-  sweep.nextEligibleAt = new Date(Date.now() + delay).toISOString();
-}
+// Pacing is now controlled by MAX_CONCURRENT (concurrent slot cap) rather
+// than time-based inter-item delays. scheduleNext is kept as a no-op
+// so any callers don't break.
+function scheduleNext(/* sweep */) {}
 
 function finalizeIfDone(sweep) {
   const allDone = sweep.items.every(i =>
@@ -358,15 +358,19 @@ function summarize(sweep) {
   const counts = { pending: 0, running: 0, complete: 0, 'cf-blocked': 0, error: 0 };
   for (const i of sweep.items) counts[i.status] = (counts[i.status] || 0) + 1;
   const remaining = counts.pending + counts.running;
-  const ratePerMs = sweep.pacing.storesPerHour / 3_600_000;
-  const etaMs = ratePerMs > 0 ? remaining / ratePerMs : 0;
+
+  // Estimate ETA: avg ~10 min per store with MAX_CONCURRENT parallel slots
+  const avgMinPerStore = 10;
+  const etaMs = remaining > 0
+    ? (Math.ceil(remaining / MAX_CONCURRENT) * avgMinPerStore * 60_000)
+    : 0;
 
   return {
     id: sweep.id,
     createdAt: sweep.createdAt,
     completedAt: sweep.completedAt || null,
     status: sweep.status,
-    nextEligibleAt: sweep.nextEligibleAt,
+    concurrency: MAX_CONCURRENT,
     pacing: sweep.pacing,
     tests: sweep.tests,
     total: sweep.items.length,
