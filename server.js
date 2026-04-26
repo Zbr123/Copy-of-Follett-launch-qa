@@ -762,8 +762,13 @@ app.get('/api/runs/:id/pdf', async (req, res) => {
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    if (REMOTE_BROWSER_ENABLED && process.env.BROWSER_WS_URL) {
+      browser = await chromium.connectOverCDP(process.env.BROWSER_WS_URL);
+    } else {
+      browser = await chromium.launch({ headless: true });
+    }
+    const context = await browser.newContext();
+    const page = await context.newPage();
     await page.setContent(html, { waitUntil: 'networkidle' });
     const pdfBuffer = await page.pdf({
       format: 'A4',
@@ -771,13 +776,15 @@ app.get('/api/runs/:id/pdf', async (req, res) => {
       printBackground: true,
       preferCSSPageSize: false,
     });
+    await context.close();
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="Follett-QA-Report-${req.params.id.slice(0,10)}.pdf"`);
     res.send(pdfBuffer);
   } catch (err) {
+    console.error('[pdf] Generation failed:', err.message);
     res.status(500).json({ error: err.message });
   } finally {
-    if (browser) await browser.close();
+    if (browser) await browser.close().catch(() => {});
   }
 });
 
@@ -1364,21 +1371,28 @@ app.get('/api/sweeps/:id/pdf', async (req, res) => {
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    if (REMOTE_BROWSER_ENABLED && process.env.BROWSER_WS_URL) {
+      browser = await chromium.connectOverCDP(process.env.BROWSER_WS_URL);
+    } else {
+      browser = await chromium.launch({ headless: true });
+    }
+    const context = await browser.newContext();
+    const page = await context.newPage();
     await page.setContent(html, { waitUntil: 'networkidle' });
     const pdfBuffer = await page.pdf({
       format: 'A4',
       margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
       printBackground: true,
     });
+    await context.close();
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="Follett-Sweep-Report-${sweep.id}.pdf"`);
     res.send(pdfBuffer);
   } catch (err) {
+    console.error('[sweep-pdf] Generation failed:', err.message);
     res.status(500).json({ error: err.message });
   } finally {
-    if (browser) await browser.close();
+    if (browser) await browser.close().catch(() => {});
   }
 });
 
