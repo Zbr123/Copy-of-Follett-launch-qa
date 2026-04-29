@@ -146,6 +146,12 @@ async function getStoreTestBrowser() {
     // which don't apply to an already-running remote browser. Stealth
     // is handled server-side by the remote provider.
     const browser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
+    // Tag the remote browser so test-runner.js → runStoreTests can
+    // detect remote mode (Bright Data) and:
+    //   • reuse the provider's existing context instead of newContext()
+    //   • skip fingerprint overrides (UA / viewport / locale)
+    //   • skip manual Cloudflare/Turnstile handling
+    browser.__isRemoteBrowser = true;
     browser.on('disconnected', () => {
       console.warn('[worker] store-test browser disconnected (remote per-job session ended)');
     });
@@ -175,6 +181,9 @@ async function getAdaScanBrowser() {
   if (USE_REMOTE_BROWSER) {
     console.log('[worker] connecting ada-scan browser to remote CDP...');
     const browser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
+    // Same flag as the store-test browser; lets any downstream code
+    // path detect Bright Data without re-reading env vars.
+    browser.__isRemoteBrowser = true;
     browser.on('disconnected', () => {
       console.warn('[worker] ada-scan browser disconnected (remote per-job session ended)');
     });
