@@ -4566,6 +4566,17 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
   // where fingerprint overrides are stripped but we're still on local
   // Chromium (which would leave us with a bare browser on Railway's
   // datacenter IP — a guaranteed CF block).
+  // ─── Remote-browser detection (Bright Data Scraping Browser) ────────
+  // NEW helper: also honors `browser.__isRemoteBrowser`, which we tag
+  // wherever `chromium.connectOverCDP(...)` is called (see runTests
+  // below + worker.js). This way a caller that already connected to
+  // Bright Data and passes the browser in still gets remote-friendly
+  // behavior, even if env vars were not re-checked here.
+  const isRemoteBrowser =
+    process.env.REMOTE_BROWSER_ENABLED === '1' ||
+    (browserOrCtx && browserOrCtx.__isRemoteBrowser === true);
+
+  /* ── OLD context-creation logic (commented out for easy revert) ──
   const useRemoteBrowser =
     process.env.REMOTE_BROWSER_ENABLED === '1' && !!process.env.BROWSER_WS_URL;
   let context;
@@ -4584,14 +4595,68 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
           }
     );
     ownsContext = true;
-    // Attach bandwidth blocking before any page is created so the very
-    // first navigation already benefits. Safe to re-apply on shared
-    // contexts — Playwright dedups identical route handlers. We skip it
-    // for shared contexts (sweep mode) to avoid compounding handlers
-    // across stores.
     await installBandwidthBlocking(context);
   }
   const page = wrapPageForCapture(await context.newPage());
+  ──────────────────────────────────────────────────────────────────── */
+
+  // ─── NEW context-creation logic ─────────────────────────────────────
+  // Remote mode (Bright Data): REUSE the default context the provider
+  // already opened on the CDP connection. Calling `newContext()` here
+  // throws away Bright Data's session — including any cf_clearance
+  // cookies it has earned — and forces it to re-solve Cloudflare on
+  // the very next navigation. We also pass NO context options in
+  // remote mode (no userAgent, no viewport, no extraHTTPHeaders, no
+  // locale, no timezone) because the provider owns the full
+  // fingerprint server-side; overriding any of those creates UA/header
+  // mismatches anti-bot systems flag as bots.
+  //
+  // Local mode: keep the original ephemeral newContext() with the same
+  // viewport/userAgent we shipped before. (Rule: don't change local
+  // behavior.)
+  let context;
+  let ownsContext = false;
+  if (opts.sharedContext) {
+    context = browserOrCtx; // already a BrowserContext
+    ownsContext = false;
+  } else if (isRemoteBrowser) {
+    // Bright Data (and most CDP-attached managed browsers) expose at
+    // least one ready-to-use context after connectOverCDP. Reuse it.
+    const existingContexts =
+      typeof browserOrCtx.contexts === 'function' ? browserOrCtx.contexts() : [];
+    context = existingContexts[0];
+    if (!context) {
+      // Extremely rare safe fallback: provider didn't open a default
+      // context. Use a bare newContext() with NO options so we don't
+      // override the provider's fingerprint.
+      context = await browserOrCtx.newContext();
+    }
+    ownsContext = false; // never close a context we didn't create
+  } else {
+    context = await browserOrCtx.newContext({
+      viewport: { width: 1920, height: 1080 },
+      deviceScaleFactor: 2,
+      userAgent:
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+    });
+    ownsContext = true;
+    // Attach bandwidth blocking before any page is created so the very
+    // first navigation already benefits. (installBandwidthBlocking
+    // already short-circuits in remote mode, so this stays local-only.)
+    await installBandwidthBlocking(context);
+  }
+
+  const page = wrapPageForCapture(await context.newPage());
+
+  // Bright Data's residential proxy + server-side CF solving can take
+  // 30–90s on a hard challenge. Give every Playwright wait/navigation
+  // 120s by default in remote mode so we don't kill the unlocker
+  // mid-solve. Local mode keeps Playwright's 30s default to preserve
+  // existing test timing.
+  if (isRemoteBrowser) {
+    page.setDefaultNavigationTimeout(120000);
+    page.setDefaultTimeout(120000);
+  }
   let activeTestId = '';
   let activeTestName = '';
 
@@ -4620,16 +4685,23 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
   //   • Local mode: keep the full retry loop — local Chromium has no
   //     server-side unlocker, so we have to detect and retry ourselves.
   const originalGoto = page.goto.bind(page);
-  if (useRemoteBrowser) {
-    // Force 3-min timeout in remote mode. Many page.goto calls in test
+  if (isRemoteBrowser) {
+    // Force 120s timeout in remote mode. Many page.goto calls in test
     // bodies pass a hardcoded `timeout: 10000-30000` that was tuned for
     // local headless Chromium; on Bright Data's residential + CF-solving
     // path those values are far too tight and cause spurious navigation
-    // timeouts. Spread `options` first so our 3-min timeout wins, but
+    // timeouts. Spread `options` first so our 120s timeout wins, but
     // preserve everything else the caller passes (waitUntil, referer,
-    // etc.). 3 min matches Bright Data's reference script.
+    // etc.).
+    //
+    // NOTE: manual Cloudflare detection (isCloudflareChallenge),
+    // Turnstile click-solving (trySolveTurnstile), and the goto retry
+    // loop are intentionally NOT invoked in this branch — Bright Data
+    // resolves CF/Turnstile server-side, and our DOM-based detector
+    // false-positives on pages that just embed Turnstile as a fraud
+    // widget (cart/checkout/login/filtered collections).
     page.goto = async function (url, options = {}) {
-      return originalGoto(url, { ...options, timeout: 3 * 60 * 1000 });
+      return originalGoto(url, { ...options, timeout: 120000 });
     };
   } else {
     const MAX_CF_RETRIES = 2;
@@ -5248,6 +5320,11 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     // var works for both code paths.
     console.log(`[runTests] Connecting to remote browser: ${options.endpoint.replace(/:[^:@]*@/, ':***@')}`);
     browser = await chromium.connectOverCDP(options.endpoint);
+    // Tag the remote browser so `runStoreTests` can detect remote mode
+    // even when env vars aren't visible / the helper is called from a
+    // worker that didn't set them. Safe no-op on the local-launch and
+    // persistent-context paths below (we never tag those).
+    browser.__isRemoteBrowser = true;
     console.log('[runTests] Remote browser connected successfully');
     sendEvent({ type: 'browser-info', message: `Connected to remote browser: ${options.endpoint.replace(/\?.*$/, '')}` });
   } else if (options.persistent) {
