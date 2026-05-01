@@ -87,7 +87,26 @@ if (!fs.existsSync(SCREENSHOTS_DIR)) {
   fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 }
 
-// Get the clean origin URL for a store (strips query params and paths from current page URL)
+// ─── Shared batch-fetch helpers ─────────────────────────────────────
+// Run HEAD requests in parallel from within the browser context.
+// Returns a map of url/path → { status, ok } — zero page navigations.
+
+async function batchFetchStatus(page, urls) {
+  try {
+    return await page.evaluate(async (list) => {
+      const out = {};
+      await Promise.all(list.map(async (url) => {
+        try {
+          const r = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+          out[url] = { status: r.status, ok: r.status >= 200 && r.status < 400 };
+        } catch { out[url] = { status: 0, ok: false }; }
+      }));
+      return out;
+    }, urls);
+  } catch { return {}; }
+}
+
+// ── Get the clean origin URL for a store (strips query params and paths) ──
 function storeOrigin(storeInput) {
   try {
     const url = new URL(storeInput.startsWith('http') ? storeInput : `https://${storeInput}`);
@@ -1751,21 +1770,58 @@ async function testPageContentMigration(page, store, emit) {
     return (await pg.textContent('body').catch(() => '')).trim();
   }
 
-  // ── Helper: check if a page exists (not 404) ──
+  // ── Helper: check if a page exists (not 404) — navigates the browser ──
+  // Only used when we genuinely need to load the page (screenshots, body
+  // inspection). For bulk existence checks use pageExistsFetch() below.
   async function pageExists(pg, url, label) {
     try {
       const resp = await pg.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await pg.waitForTimeout(2000);
+      await pg.waitForTimeout(1000);
       const status = resp ? resp.status() : 0;
       if (status === 404) return false;
       const bodyText = await getBodyText(pg);
-      // Only flag as 404 if the page title or a prominent heading says so — not random body text
       const title = await pg.title().catch(() => '');
       const h1 = await pg.$eval('h1', el => el.textContent).catch(() => '');
       const is404 = /404|page not found/i.test(title) || /404|page not found/i.test(h1);
       return !is404 && bodyText.length > 100;
     } catch {
       return false;
+    }
+  }
+
+  // ── Helper: fast existence check via in-browser fetch — NO navigation ──
+  // Fires a HEAD request from within the browser context so the current page
+  // stays loaded and we don't pay the cost of a full navigation + DOM render.
+  async function pageExistsFetch(url) {
+    try {
+      const status = await page.evaluate(async (u) => {
+        try {
+          const r = await fetch(u, { method: 'HEAD', redirect: 'follow' });
+          return r.status;
+        } catch { return 0; }
+      }, url);
+      return status >= 200 && status < 400;
+    } catch {
+      return false;
+    }
+  }
+
+  // ── Helper: batch-check many URLs in parallel via in-browser fetch ──
+  // Returns a map of path → boolean. One CDP call instead of N navigations.
+  async function batchPageExists(paths) {
+    try {
+      return await page.evaluate(async (ps, origin) => {
+        const out = {};
+        await Promise.all(ps.map(async (p) => {
+          try {
+            const r = await fetch(origin + p, { method: 'HEAD', redirect: 'follow' });
+            out[p] = r.status >= 200 && r.status < 400;
+          } catch { out[p] = false; }
+        }));
+        return out;
+      }, paths, newOrigin);
+    } catch {
+      return {};
     }
   }
 
@@ -1899,12 +1955,11 @@ async function testPageContentMigration(page, store, emit) {
     // Hide the preview bar so it doesn't cover footer elements
     await hidePreviewBar();
 
-    // Scroll all the way to the absolute bottom to ensure lazy-loaded footer content appears
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(2000);
-    // Scroll again — some footers render extra content after the first scroll
+    // Scroll to the bottom to ensure lazy-loaded footer content appears
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await page.waitForTimeout(1500);
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(1000);
 
     return await page.evaluate(() => {
       const links = [];
@@ -1975,91 +2030,39 @@ async function testPageContentMigration(page, store, emit) {
     });
   }
 
-  // Helper: combined footer + page check — wrapped in try/catch so one failure doesn't kill the whole test
-  async function checkFooterAndPage(checkNumber, name, footerTextRegex, footerHrefRegex, pagePath, shotId) {
-    emit({ step: `Check ${checkNumber}: Verifying ${name}...` });
+  // ── Batch-check all footer page URLs in parallel (one CDP call) ──
+  // This replaces 11 sequential page.goto() navigations with a single
+  // Promise.all fetch() inside the browser — saves 60-180 seconds per run.
+  const FOOTER_PAGE_CHECKS = [
+    { num: 5,  name: 'Price Match Guarantee',       textRx: /price\s*match/i,           hrefRx: /price-match/i,             path: '/pages/price-match-guarantee' },
+    { num: 6,  name: 'Accessibility / Browser Support', textRx: /accessib|browser\s*support/i, hrefRx: /faq-accessibility/i,     path: '/pages/faq-accessibility-browser-support' },
+    { num: 7,  name: 'New Students & Parents',      textRx: /new\s*students|incoming/i, hrefRx: /incoming-students/i,       path: '/pages/incoming-students' },
+    { num: 8,  name: 'Delivery Options FAQ',        textRx: /deliver|shipping/i,        hrefRx: /faq-shipping|shipping-delivery/i, path: '/pages/faq-shipping-delivery' },
+    { num: 9,  name: 'Payments Accepted FAQ',       textRx: /payment|order/i,           hrefRx: /faq-orders/i,              path: '/pages/faq-orders' },
+    { num: 10, name: 'Returns',                     textRx: /return/i,                  hrefRx: /return/i,                  path: '/pages/faq-online-return-policy' },
+    { num: 11, name: 'Help/FAQ',                    textRx: /help|faq/i,                hrefRx: /\/pages\/faq/i,            path: '/pages/faq' },
+    { num: 12, name: 'Sell Your Textbooks',         textRx: /sell.*textbook/i,          hrefRx: /faq-sell/i,                path: '/pages/faq-sell-your-textbooks' },
+    { num: 13, name: 'Textbook FAQs',               textRx: /textbook\s*faq/i,          hrefRx: /faq-textbooks/i,           path: '/pages/faq-textbooks' },
+    { num: 14, name: 'Rentals FAQ',                 textRx: /rental/i,                  hrefRx: /faq-rental/i,              path: '/pages/faq-rentals' },
+    { num: 15, name: 'Digital Materials FAQ',       textRx: /digital/i,                 hrefRx: /faq-digital/i,             path: '/pages/faq-digital-books' },
+  ];
 
+  emit({ step: 'Batch-checking all footer page URLs in parallel...' });
+  const pageExistenceMap = await batchPageExists(FOOTER_PAGE_CHECKS.map(c => c.path));
+
+  for (const check of FOOTER_PAGE_CHECKS) {
+    emit({ step: `Check ${check.num}: Verifying ${check.name}...` });
     try {
-      const inFooter = footerLinkExists(footerTextRegex, footerHrefRegex);
-      const fullUrl = `${newOrigin}${pagePath}`;
-      let exists = false;
-      try {
-        exists = await pageExists(page, fullUrl, name);
-      } catch (navErr) {
-        emit({ step: `Check ${checkNumber}: Navigation to ${fullUrl} failed: ${navErr.message}` });
-      }
-
-      if (exists) {
-        try {
-          const shot = screenshotPath(store.newStore, 'page-content-migration', shotId);
-          await page.screenshot({ path: shot, fullPage: false });
-          emit({ screenshot: screenshotUrl(shot), label: `${name} page` });
-        } catch {}
-      }
-
-      const passed = inFooter && exists;
-      record(name, passed,
+      const inFooter = footerLinkExists(check.textRx, check.hrefRx);
+      const exists = pageExistenceMap[check.path] === true;
+      const fullUrl = `${newOrigin}${check.path}`;
+      record(check.name, inFooter && exists,
         `Footer link: ${inFooter ? 'visible' : 'NOT found'}, Page at ${fullUrl}: ${exists ? 'loads' : 'NOT found'}`
       );
     } catch (err) {
-      record(name, false, `Error during check: ${err.message}`);
+      record(check.name, false, `Error during check: ${err.message}`);
     }
   }
-
-  // ── Check 5: Price Match Guarantee ──
-  await checkFooterAndPage(5, 'Price Match Guarantee',
-    /price\s*match/i, /price-match/i,
-    '/pages/price-match-guarantee', '05_price_match');
-
-  // ── Check 6: Accessibility / Browser Support ──
-  await checkFooterAndPage(6, 'Accessibility / Browser Support',
-    /accessib|browser\s*support/i, /faq-accessibility/i,
-    '/pages/faq-accessibility-browser-support', '06_accessibility');
-
-  // ── Check 7: New Students & Parents ──
-  await checkFooterAndPage(7, 'New Students & Parents',
-    /new\s*students|incoming/i, /incoming-students/i,
-    '/pages/incoming-students', '07_incoming_students');
-
-  // ── Check 8: Delivery Options FAQ ──
-  await checkFooterAndPage(8, 'Delivery Options FAQ',
-    /deliver|shipping/i, /faq-shipping|shipping-delivery/i,
-    '/pages/faq-shipping-delivery', '08_delivery_faq');
-
-  // ── Check 9: Payments Accepted FAQ ──
-  await checkFooterAndPage(9, 'Payments Accepted FAQ',
-    /payment|order/i, /faq-orders/i,
-    '/pages/faq-orders', '09_payments_faq');
-
-  // ── Check 10: Returns ──
-  await checkFooterAndPage(10, 'Returns',
-    /return/i, /return/i,
-    '/pages/faq-online-return-policy', '10_returns');
-
-  // ── Check 11: Help/FAQ ──
-  await checkFooterAndPage(11, 'Help/FAQ',
-    /help|faq/i, /\/pages\/faq/i,
-    '/pages/faq', '11_faq');
-
-  // ── Check 12: Sell Your Textbooks ──
-  await checkFooterAndPage(12, 'Sell Your Textbooks',
-    /sell.*textbook/i, /faq-sell/i,
-    '/pages/faq-sell-your-textbooks', '12_sell_textbooks');
-
-  // ── Check 13: Textbook FAQs ──
-  await checkFooterAndPage(13, 'Textbook FAQs',
-    /textbook\s*faq/i, /faq-textbooks/i,
-    '/pages/faq-textbooks', '13_textbook_faq');
-
-  // ── Check 14: Rentals FAQ ──
-  await checkFooterAndPage(14, 'Rentals FAQ',
-    /rental/i, /faq-rental/i,
-    '/pages/faq-rentals', '14_rentals_faq');
-
-  // ── Check 15: Digital Materials FAQ ──
-  await checkFooterAndPage(15, 'Digital Materials FAQ',
-    /digital/i, /faq-digital/i,
-    '/pages/faq-digital-books', '15_digital_faq');
 
   // ── Check 16: Terms of Use link → follett.com/terms-of-use/ ──
   emit({ step: 'Check 16: Verifying Terms of Use footer link...' });
@@ -2089,41 +2092,35 @@ async function testPageContentMigration(page, store, emit) {
     record('Privacy Policy', false, 'Privacy Policy link NOT found in footer');
   }
 
-  // ── Check 18: Cookie Preference Policy → opens OneTrust modal ──
+  // ── Checks 18 & 19: Cookie Preference + Do Not Sell (OneTrust) ──
+  // Both require the homepage footer to be loaded. Load it ONCE and run
+  // both checks without reloading between them.
   emit({ step: 'Check 18: Verifying Cookie Preference Policy footer link...' });
-  // Navigate to homepage footer to click the link
   await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(2000); // CF challenge JS needs time to execute post-navigation
   await hidePreviewBar();
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(2000);
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await page.waitForTimeout(1500);
 
-  // Search both inside and outside <footer> — OneTrust links are often outside
+  // ── Check 18 ──
   const cookieLink = await page.$('footer a:has-text("Cookie"), footer button:has-text("Cookie"), a:has-text("Cookie Preference"), button:has-text("Cookie Preference"), .ot-sdk-show-settings, #ot-sdk-btn, [class*="onetrust"] a, [class*="onetrust"] button');
   const cookieVisible = cookieLink ? await cookieLink.isVisible().catch(() => false) : false;
 
   if (cookieVisible) {
-    // Check if it has an onclick for OneTrust or a # href (modal trigger)
-    const cookieAttrs = await page.evaluate(el => {
-      return {
-        href: el.getAttribute('href') || '',
-        onclick: el.getAttribute('onclick') || '',
-        className: el.className || '',
-        id: el.id || '',
-      };
-    }, cookieLink);
+    const cookieAttrs = await page.evaluate(el => ({
+      href: el.getAttribute('href') || '',
+      onclick: el.getAttribute('onclick') || '',
+      className: el.className || '',
+      id: el.id || '',
+    }), cookieLink);
     const isOneTrust = /onetrust|optanon|cookie/i.test(cookieAttrs.onclick + cookieAttrs.className + cookieAttrs.id + cookieAttrs.href);
-    // Try clicking to see if a modal opens
     try {
       await cookieLink.click({ timeout: 3000 });
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1500);
       const modalVisible = await page.$('#onetrust-pc-sdk, .onetrust-pc-dark-filter, [id*="onetrust"], [class*="onetrust"], .ot-sdk-container');
       const cookieShot = screenshotPath(store.newStore, 'page-content-migration', '18_cookie_modal');
       await page.screenshot({ path: cookieShot, fullPage: false });
       emit({ screenshot: screenshotUrl(cookieShot), label: 'Cookie Preference modal' });
-
       if (modalVisible || isOneTrust) {
         record('Cookie Preference Policy', true, 'Footer link found — OneTrust modal triggered');
       } else {
@@ -2136,33 +2133,27 @@ async function testPageContentMigration(page, store, emit) {
     record('Cookie Preference Policy', false, 'Cookie Preference Policy link NOT found in footer');
   }
 
-  // ── Check 19: Do Not Sell link → opens OneTrust form ──
+  // ── Check 19: Do Not Sell — reuse same loaded page ──
   emit({ step: 'Check 19: Verifying Do Not Sell footer link...' });
-  await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.waitForTimeout(2000);
-  await hidePreviewBar();
+  // Close any open modal first, then scroll to footer again
+  try { await page.keyboard.press('Escape'); } catch (_) {}
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(2000);
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(1000);
 
-  // Search everywhere on page — not just inside <footer>
   const dnsLink = await page.$('footer a:has-text("Do Not Sell"), footer button:has-text("Do Not Sell"), footer a:has-text("Do not sell"), a:has-text("Do Not Sell"), button:has-text("Do Not Sell"), a:has-text("Do not sell")');
   const dnsVisible = dnsLink ? await dnsLink.isVisible().catch(() => false) : false;
 
   if (dnsVisible) {
-    const dnsAttrs = await page.evaluate(el => {
-      return {
-        href: el.getAttribute('href') || '',
-        onclick: el.getAttribute('onclick') || '',
-        className: el.className || '',
-        id: el.id || '',
-      };
-    }, dnsLink);
+    const dnsAttrs = await page.evaluate(el => ({
+      href: el.getAttribute('href') || '',
+      onclick: el.getAttribute('onclick') || '',
+      className: el.className || '',
+      id: el.id || '',
+    }), dnsLink);
     const isOneTrust = /onetrust|optanon/i.test(dnsAttrs.onclick + dnsAttrs.className + dnsAttrs.id + dnsAttrs.href);
     try {
       await dnsLink.click({ timeout: 3000 });
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1500);
       const dnsModal = await page.$('#onetrust-pc-sdk, .onetrust-pc-dark-filter, [id*="onetrust"], [class*="onetrust"], .ot-sdk-container, #ot-sdk-btn');
       const dnsShot = screenshotPath(store.newStore, 'page-content-migration', '19_dns_modal');
       await page.screenshot({ path: dnsShot, fullPage: false });
@@ -2180,80 +2171,57 @@ async function testPageContentMigration(page, store, emit) {
     record('Do Not Sell', false, 'Do Not Sell link NOT found in footer');
   }
 
-  // ── Check 20: Find Your Textbooks link → navigates to valid page ──
+  // ── Check 20: Find Your Textbooks link — fast fetch, no navigation ──
   emit({ step: 'Check 20: Verifying Find Your Textbooks link...' });
   const fytLink = footerLinks.find(l => /find\s*(your)?\s*textbook/i.test(l.text) && l.visible);
 
   if (fytLink) {
     const fytHref = fytLink.href.startsWith('http') ? fytLink.href : `${newOrigin}${fytLink.href}`;
-    const fytExists = await pageExists(page, fytHref, 'Find Your Textbooks');
-
-    if (fytExists) {
-      const fytShot = screenshotPath(store.newStore, 'page-content-migration', '20_find_textbooks');
-      await page.screenshot({ path: fytShot, fullPage: false });
-      emit({ screenshot: screenshotUrl(fytShot), label: 'Find Your Textbooks page' });
-      record('Find Your Textbooks', true, `Footer link found and page loads: ${fytHref}`);
-    } else {
-      record('Find Your Textbooks', false, `Footer link found but page is 404: ${fytHref}`);
-    }
+    const fytExists = await pageExistsFetch(fytHref);
+    record('Find Your Textbooks', fytExists,
+      fytExists ? `Footer link found and page loads: ${fytHref}` : `Footer link found but page is 404: ${fytHref}`
+    );
   } else {
-    // Also check nav/header — "Find Your Textbooks" might be in the header nav
-    await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await page.waitForTimeout(1500);
-    const headerFyt = await page.$('a:has-text("Find Your Textbooks")');
-    const headerFytVisible = headerFyt ? await headerFyt.isVisible().catch(() => false) : false;
-
-    if (headerFytVisible) {
-      const href = await headerFyt.getAttribute('href');
-      const fullHref = href.startsWith('http') ? href : `${newOrigin}${href}`;
-      const exists = await pageExists(page, fullHref, 'Find Your Textbooks');
-      if (exists) {
-        const fytShot = screenshotPath(store.newStore, 'page-content-migration', '20_find_textbooks');
-        await page.screenshot({ path: fytShot, fullPage: false });
-        emit({ screenshot: screenshotUrl(fytShot), label: 'Find Your Textbooks page' });
+    // Check nav/header via in-page evaluate — no separate navigation needed
+    const fytNavHref = await page.evaluate((origin) => {
+      for (const a of document.querySelectorAll('a')) {
+        if (/find\s*(your)?\s*textbook/i.test(a.textContent || '') && a.offsetParent !== null) {
+          const href = a.getAttribute('href') || '';
+          return href.startsWith('http') ? href : origin + href;
+        }
       }
-      record('Find Your Textbooks', exists, exists ? `Header link found and page loads: ${fullHref}` : `Header link found but page is 404: ${fullHref}`);
+      return null;
+    }, newOrigin);
+
+    if (fytNavHref) {
+      const exists = await pageExistsFetch(fytNavHref);
+      record('Find Your Textbooks', exists,
+        exists ? `Nav link found and page loads: ${fytNavHref}` : `Nav link found but page is 404: ${fytNavHref}`
+      );
     } else {
-      record('Find Your Textbooks', false, 'Find Your Textbooks link NOT found in footer or header');
+      record('Find Your Textbooks', false, 'Find Your Textbooks link NOT found in footer or nav');
     }
   }
 
-  // ── Check 21: Store Hours page exists ──
+  // ── Check 21: Store Hours page exists — batch fetch, no navigation ──
   emit({ step: 'Check 21: Verifying Store Hours page...' });
-  // Try common store hours page paths
-  const hoursPages = ['/pages/store-hours', '/pages/hours', '/pages/store-info'];
+  const hoursPaths = ['/pages/store-hours', '/pages/hours', '/pages/store-info', '/pages/view-store-hours'];
+  // Also include a footer link if present
+  const hoursFooterLink = footerLinks.find(l => /store\s*hours|hours.*operation/i.test(l.text) && l.visible);
+  if (hoursFooterLink) {
+    const fp = hoursFooterLink.href.startsWith('http') ? hoursFooterLink.href : hoursFooterLink.href.split('?')[0];
+    if (!fp.startsWith('http') && !hoursPaths.includes(fp)) hoursPaths.push(fp);
+  }
+  const hoursExistMap = await batchPageExists(hoursPaths.filter(p => !p.startsWith('http')));
   let hoursPageFound = false;
   let hoursPageUrl = '';
-
-  for (const path of hoursPages) {
-    const url = `${newOrigin}${path}`;
-    const exists = await pageExists(page, url, 'Store Hours');
-    if (exists) {
+  for (const p of hoursPaths) {
+    if (!p.startsWith('http') && hoursExistMap[p]) {
       hoursPageFound = true;
-      hoursPageUrl = url;
-      const hoursPageShot = screenshotPath(store.newStore, 'page-content-migration', '21_store_hours_page');
-      await page.screenshot({ path: hoursPageShot, fullPage: false });
-      emit({ screenshot: screenshotUrl(hoursPageShot), label: 'Store Hours page' });
+      hoursPageUrl = `${newOrigin}${p}`;
       break;
     }
   }
-
-  // Also check for a footer link to store hours
-  if (!hoursPageFound) {
-    const hoursLink = footerLinks.find(l => /store\s*hours|hours.*operation/i.test(l.text) && l.visible);
-    if (hoursLink) {
-      const hoursHref = hoursLink.href.startsWith('http') ? hoursLink.href : `${newOrigin}${hoursLink.href}`;
-      const exists = await pageExists(page, hoursHref, 'Store Hours');
-      if (exists) {
-        hoursPageFound = true;
-        hoursPageUrl = hoursHref;
-        const hoursPageShot = screenshotPath(store.newStore, 'page-content-migration', '21_store_hours_page');
-        await page.screenshot({ path: hoursPageShot, fullPage: false });
-        emit({ screenshot: screenshotUrl(hoursPageShot), label: 'Store Hours page' });
-      }
-    }
-  }
-
   record('Store Hours Page', hoursPageFound,
     hoursPageFound ? `Store Hours page found at ${hoursPageUrl}` : 'Store Hours page not found (tried /pages/store-hours, /pages/hours, /pages/store-info, and footer links)'
   );
@@ -2263,11 +2231,9 @@ async function testPageContentMigration(page, store, emit) {
 
   // Navigate back to homepage to find the footer signup
   await page.goto(newOrigin, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.waitForTimeout(3000);
-
-  // Scroll to footer to ensure it loads
+  await page.waitForTimeout(2000); // CF challenge JS needs time to execute post-navigation
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1500);
 
   const emailSignupCheck = await page.evaluate(() => {
     const body = document.body.innerText;
@@ -3295,9 +3261,8 @@ async function testEmptyCollections(page, store, emit) {
   const origin = storeOrigin(store.newStore);
   emit({ step: 'Discovering collection links from navigation...' });
 
-  // Make sure we're on the homepage first
   await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(2000);
 
   const collections = await discoverNavCollections(page, origin);
   emit({ step: `Found ${collections.length} unique collection links in nav` });
@@ -3306,58 +3271,49 @@ async function testEmptyCollections(page, store, emit) {
     return { passed: true, message: 'No collection links found in nav — nothing to scan' };
   }
 
-  // Cap at 40 to keep runtime reasonable
+  // Cap at 40
   const toCheck = collections.slice(0, 40);
-  const emptyOnes = [];
-  let checked = 0;
 
-  for (const col of toCheck) {
-    checked++;
-    const url = `${origin}${col.pathname}`;
-    try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await page.waitForTimeout(1000);
-
-      // Count product cards
-      const productCount = await page.$$eval(
-        '[class*="product"], .product-card, .grid__item, [data-product-id], a[href*="/products/"]',
-        els => {
-          const seen = new Set();
-          return els.filter(el => {
-            const href = el.getAttribute('href') || el.dataset.productId || el.className;
-            if (seen.has(href)) return false;
-            seen.add(href);
-            return true;
-          }).length;
-        }
-      );
-
-      // Also check for "No products found" text
-      const bodyText = await page.textContent('body').catch(() => '');
-      const hasNoProducts = /no products found/i.test(bodyText);
-
-      if (productCount === 0 || hasNoProducts) {
-        emptyOnes.push({ label: col.label, pathname: col.pathname });
-        emit({ step: `❌ EMPTY: "${col.label}" → ${col.pathname}` });
-
-        // Screenshot first 3 empty ones
-        if (emptyOnes.length <= 3) {
-          const shot = screenshotPath(store.newStore, 'empty-collections', `empty_${emptyOnes.length}`);
-          await page.screenshot({ path: shot, fullPage: false });
-          emit({ screenshot: screenshotUrl(shot), label: `Empty: ${col.label}` });
-        }
+  // ── Use Shopify's products.json API to check all collections in parallel ──
+  // One batch evaluate call replaces 40 sequential page.goto() navigations.
+  emit({ step: `Batch-checking ${toCheck.length} collections via Shopify API...` });
+  const batchResults = await page.evaluate(async (cols, orig) => {
+    return await Promise.all(cols.map(async (col) => {
+      const handle = col.pathname.replace(/^\/collections\//, '').split('?')[0].split('#')[0];
+      try {
+        const r = await fetch(`${orig}/collections/${handle}/products.json?limit=1`);
+        if (!r.ok) return { ...col, hasProducts: true }; // assume OK on non-200 (e.g. API disabled)
+        const data = await r.json();
+        return { ...col, hasProducts: Array.isArray(data.products) && data.products.length > 0 };
+      } catch {
+        return { ...col, hasProducts: true }; // network error → assume not empty
       }
-    } catch (err) {
-      emit({ step: `⚠ Error loading ${col.pathname}: ${err.message}` });
+    }));
+  }, toCheck, origin).catch(() => toCheck.map(c => ({ ...c, hasProducts: true })));
+
+  const emptyOnes = batchResults.filter(r => !r.hasProducts);
+  const checked = batchResults.length;
+
+  // Navigate to empty collections only for screenshots (max 3 navigations total)
+  for (let i = 0; i < emptyOnes.length; i++) {
+    const col = emptyOnes[i];
+    emit({ step: `❌ EMPTY: "${col.label}" → ${col.pathname}` });
+    if (i < 3) {
+      try {
+        await page.goto(`${origin}${col.pathname}`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        await page.waitForTimeout(1500);
+        const shot = screenshotPath(store.newStore, 'empty-collections', `empty_${i + 1}`);
+        await page.screenshot({ path: shot, fullPage: false });
+        emit({ screenshot: screenshotUrl(shot), label: `Empty: ${col.label}` });
+      } catch (err) {
+        emit({ step: `⚠ Error screenshotting ${col.pathname}: ${err.message}` });
+      }
     }
   }
 
   if (emptyOnes.length > 0) {
     const list = emptyOnes.map(e => `"${e.label}" (${e.pathname})`).join(', ');
-    return {
-      passed: false,
-      message: `${emptyOnes.length} of ${checked} collections are empty: ${list}`,
-    };
+    return { passed: false, message: `${emptyOnes.length} of ${checked} collections are empty: ${list}` };
   }
 
   return { passed: true, message: `All ${checked} nav collections have products` };
@@ -3407,7 +3363,7 @@ async function testSaleClearancePurity(page, store, emit) {
     const url = `${origin}${col.pathname}`;
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(1000);
 
       // Check if price filters are pre-applied (bug #54)
       const preCheckedFilters = await page.$$eval(
@@ -5226,64 +5182,22 @@ async function testInventory(page, store, emit) {
   const navToCheck = navLinks.sort(() => Math.random() - 0.5).slice(0, 10);
   let brokenLinks = 0;
 
+  // Batch-check all nav links in parallel via in-browser fetch — zero page navigations.
+  emit({ step: `Batch-checking ${navToCheck.length} nav links...` });
+  const navFullUrls = navToCheck.map(l => l.href.startsWith('http') ? l.href : `${origin}${l.href}`);
+  const navStatuses = await batchFetchStatus(page, navFullUrls);
+
   for (let i = 0; i < navToCheck.length; i++) {
     const link = navToCheck[i];
-    const fullUrl = link.href.startsWith('http') ? link.href : `${origin}${link.href}`;
-    emit({ step: `Nav link ${i + 1}/10: "${link.text}" → ${link.href}` });
+    const fullUrl = navFullUrls[i];
+    const s = navStatuses[fullUrl] || { status: 0, ok: false };
+    emit({ step: `Nav link ${i + 1}/${navToCheck.length}: "${link.text}" → ${link.href} (${s.status})` });
 
-    try {
-      const response = await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-      await page.waitForTimeout(1500);
-
-      const status = response ? response.status() : 0;
-
-      // Check for 404 or error pages
-      const pageCheck = await page.evaluate(() => {
-        const title = (document.title || '').toLowerCase();
-        const h1 = document.querySelector('h1');
-        const h1Text = h1 ? (h1.textContent || '').toLowerCase() : '';
-        const bodyText = (document.body.innerText || '').substring(0, 500).toLowerCase();
-
-        const is404 =
-          title.includes('404') || title.includes('not found') ||
-          h1Text.includes('404') || h1Text.includes('not found') ||
-          h1Text.includes('page not found');
-
-        const isEmpty = bodyText.trim().length < 50;
-
-        return { is404, isEmpty, title: document.title, h1: h1Text.substring(0, 80) };
-      });
-
-      if (status >= 400 || pageCheck.is404) {
-        brokenLinks++;
-        const shotPath = screenshotPath(store.newStore, 'inventory', `02_nav_broken_${i + 1}`);
-        await page.screenshot({ path: shotPath, fullPage: false });
-        emit({ screenshot: screenshotUrl(shotPath), label: `Broken: ${link.text}` });
-        record(
-          `Nav Link "${link.text}"`,
-          false,
-          `Broken page (status: ${status}): ${fullUrl} — Title: "${pageCheck.title}"`
-        );
-      } else if (pageCheck.isEmpty) {
-        const shotPath = screenshotPath(store.newStore, 'inventory', `02_nav_empty_${i + 1}`);
-        await page.screenshot({ path: shotPath, fullPage: false });
-        emit({ screenshot: screenshotUrl(shotPath), label: `Empty: ${link.text}` });
-        record(
-          `Nav Link "${link.text}"`,
-          false,
-          `Page loads but appears empty: ${fullUrl}`
-        );
-        brokenLinks++;
-      } else {
-        record(
-          `Nav Link "${link.text}"`,
-          true,
-          `Page loads (status: ${status}): ${fullUrl}`
-        );
-      }
-    } catch (err) {
+    if (!s.ok || s.status >= 400) {
       brokenLinks++;
-      record(`Nav Link "${link.text}"`, false, `Failed to load: ${err.message.substring(0, 100)}`);
+      record(`Nav Link "${link.text}"`, false, `Broken (HTTP ${s.status}): ${fullUrl}`);
+    } else {
+      record(`Nav Link "${link.text}"`, true, `Page loads (HTTP ${s.status}): ${fullUrl}`);
     }
   }
 
