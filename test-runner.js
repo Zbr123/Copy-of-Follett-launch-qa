@@ -4933,6 +4933,17 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
         });
       }
     }
+
+    // ── Release memory between tests ──
+    // Heavy Shopify PDPs accumulate JS heap, image cache, and DOM state in
+    // the same page across tests. After 4–5 tests this can balloon past
+    // Railway's container memory limit and trigger an OOM kill that
+    // surfaces in the UI as "Connection error: network error". Navigating
+    // to about:blank forces the renderer to drop the previous page's
+    // resources before the next test starts.
+    try {
+      await page.goto('about:blank', { waitUntil: 'load', timeout: 5000 });
+    } catch (_) {}
   }
 
   } finally {
@@ -5238,6 +5249,26 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     '--disable-features=IsolateOrigins,site-per-process',
     '--disable-setuid-sandbox',
     '--window-size=1920,1080',
+    // ── CRITICAL for Railway / Docker stability ──
+    // /dev/shm is 64 MB by default in Docker. Chrome uses it for tab IPC and
+    // shared GPU memory; on heavy Shopify PDPs it fills up after 4–5 page
+    // loads and the renderer crashes. Forcing /tmp (which has GBs of space)
+    // is the documented fix and the single biggest source of the
+    // "network error" alerts you've been seeing.
+    '--disable-dev-shm-usage',
+    // Cap renderer JS heap so a runaway page can't OOM the container.
+    '--js-flags=--max-old-space-size=512',
+    '--memory-pressure-off',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    // Turn off unused subsystems that consume RAM in headless.
+    '--disable-extensions',
+    '--disable-component-extensions-with-background-pages',
+    '--disable-default-apps',
+    '--mute-audio',
+    '--no-first-run',
+    '--no-default-browser-check',
   ];
 
   let browser = null;

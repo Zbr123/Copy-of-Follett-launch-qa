@@ -17,6 +17,15 @@ const { chromium: chromiumVanilla } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 
+// Survive stray promise rejections / async errors so a single bad test
+// can't crash the worker process and drop in-flight jobs.
+process.on('unhandledRejection', (reason) => {
+  console.error('[worker:unhandledRejection]', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[worker:uncaughtException]', err && err.stack ? err.stack : err);
+});
+
 const {
   STORE_TEST_QUEUE,
   ADA_SCAN_QUEUE,
@@ -168,6 +177,19 @@ async function getStoreTestBrowser() {
       '--disable-features=IsolateOrigins,site-per-process',
       '--disable-setuid-sandbox',
       '--window-size=1920,1080',
+      // ── Critical for Railway/Docker stability — see test-runner.js notes ──
+      '--disable-dev-shm-usage',
+      '--js-flags=--max-old-space-size=512',
+      '--memory-pressure-off',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-extensions',
+      '--disable-component-extensions-with-background-pages',
+      '--disable-default-apps',
+      '--mute-audio',
+      '--no-first-run',
+      '--no-default-browser-check',
     ],
   });
   storeTestBrowser.on('disconnected', () => {
