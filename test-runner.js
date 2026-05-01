@@ -232,66 +232,72 @@ async function addStandardItemToCart(page, store, emit, options = {}) {
   await page.waitForTimeout(750);
   await hidePreviewBar(page);
 
-  for (let attempt = 0; attempt < maxProducts; attempt++) {
-    if (attempt > 0) {
-      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await page.waitForTimeout(750);
-      await hidePreviewBar(page);
-    }
+  // Cache the product list once — saves N-1 collection re-navigations.
+  const visibleLinks = await getVisibleProductLinks(page);
+  emit({ step: `Found ${visibleLinks.length} product(s) on collection page` });
 
-    const visibleLinks = await getVisibleProductLinks(page);
-    if (attempt >= visibleLinks.length) {
-      emit({ step: `Only ${visibleLinks.length} products available — no more to try` });
-      break;
-    }
+  // Cap attempts at the smaller of maxProducts or visibleLinks.length to
+  // avoid pointless extra iterations.
+  const cap = Math.min(maxProducts, visibleLinks.length);
 
+  for (let attempt = 0; attempt < cap; attempt++) {
     const productHref = visibleLinks[attempt];
     const productUrl = productHref.startsWith('http') ? productHref : `${origin}${productHref}`;
-    emit({ step: `[Product ${attempt + 1}] Trying: ${productHref}` });
-    await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await page.waitForTimeout(500);
-    await hidePreviewBar(page);
 
-    if (attempt === 0) {
-      const pdpShot = screenshotPath(store.newStore, screenshotPrefix, '01_product');
-      await page.screenshot({ path: pdpShot, fullPage: false });
-      emit({ screenshot: screenshotUrl(pdpShot), label: 'Product page' });
-    }
+    try {
+      emit({ step: `[Product ${attempt + 1}] Trying: ${productHref}` });
+      await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(500);
+      await hidePreviewBar(page);
 
-    await trySelectPurchaseOption(page);
+      if (attempt === 0) {
+        const pdpShot = screenshotPath(store.newStore, screenshotPrefix, '01_product');
+        await page.screenshot({ path: pdpShot, fullPage: false }).catch(() => {});
+        emit({ screenshot: screenshotUrl(pdpShot), label: 'Product page' });
+      }
 
-    const addClicked = await clickAddToCart(page);
-    if (!addClicked) {
-      emit({ step: `[Product ${attempt + 1}] Add button not found or disabled — trying next...` });
+      await trySelectPurchaseOption(page);
+
+      const addClicked = await clickAddToCart(page);
+      if (!addClicked) {
+        emit({ step: `[Product ${attempt + 1}] Add button not found or disabled — trying next...` });
+        continue;
+      }
+
+      emit({ step: `[Product ${attempt + 1}] Clicked: "${addClicked}"` });
+
+      let cartData = null;
+      for (let poll = 0; poll < 3; poll++) {
+        await page.waitForTimeout(800);
+        await closeCartDrawer(page);
+        cartData = await readCartData(page);
+        if (cartData && cartData.item_count > 0) break;
+      }
+
+      if (cartData && cartData.item_count > 0) {
+        emit({ step: `[Product ${attempt + 1}] Cart confirmed: ${cartData.item_count} item(s)` });
+        const cartShot = screenshotPath(store.newStore, screenshotPrefix, '02_after_add');
+        await page.screenshot({ path: cartShot, fullPage: false }).catch(() => {});
+        emit({ screenshot: screenshotUrl(cartShot), label: 'After Add to Cart' });
+        const qaState = getQaState(page);
+        qaState.standardCartReady = true;
+        qaState.standardCartSource = listUrl;
+        qaState.standardCartProductUrl = productUrl;
+        return { passed: true, itemCount: cartData.item_count, productUrl };
+      }
+
+      emit({ step: `[Product ${attempt + 1}] Cart still empty after add — trying next...` });
+    } catch (err) {
+      emit({ step: `[Product ${attempt + 1}] Error: ${(err.message || err).toString().substring(0, 120)} — trying next...` });
+      if (/Target closed|Browser has been closed|Execution context/i.test(err.message || '')) {
+        emit({ step: 'Page/browser context lost — aborting product loop' });
+        break;
+      }
       continue;
     }
-
-    emit({ step: `[Product ${attempt + 1}] Clicked: "${addClicked}"` });
-
-    let cartData = null;
-    for (let poll = 0; poll < 3; poll++) {
-      await page.waitForTimeout(800);
-      await closeCartDrawer(page);
-      cartData = await readCartData(page);
-      if (cartData && cartData.item_count > 0) break;
-    }
-
-    if (cartData && cartData.item_count > 0) {
-      emit({ step: `[Product ${attempt + 1}] Cart confirmed: ${cartData.item_count} item(s)` });
-      const cartShot = screenshotPath(store.newStore, screenshotPrefix, '02_after_add');
-      await page.screenshot({ path: cartShot, fullPage: false });
-      emit({ screenshot: screenshotUrl(cartShot), label: 'After Add to Cart' });
-      const qaState = getQaState(page);
-      qaState.standardCartReady = true;
-      qaState.standardCartSource = listUrl;
-      qaState.standardCartProductUrl = productUrl;
-      return { passed: true, itemCount: cartData.item_count, productUrl };
-    }
-
-    emit({ step: `[Product ${attempt + 1}] Cart still empty after add — trying next...` });
   }
 
-  return { passed: false, message: `Tried ${maxProducts} products from ${listUrl} — none could be added to cart` };
+  return { passed: false, message: `Tried ${cap} products from ${listUrl} — none could be added to cart` };
 }
 
 // Available test definitions
@@ -737,20 +743,17 @@ async function testRentalCollateral(page, store, emit) {
   await page.screenshot({ path: resultsShot, fullPage: false });
   emit({ screenshot: screenshotUrl(resultsShot), label: 'Search results' });
 
-  // Step 3: Try up to 5 products from search results by position
-  const MAX_PRODUCTS = 5;
+  // Step 3: Try up to 4 products from search results by position.
+  // Each iteration is wrapped in its own try/catch so a single bad PDP
+  // (slow load, browser hiccup, transient nav error) cannot abort the
+  // whole test or crash the server.
+  const MAX_PRODUCTS = 4;
   let rentalSuccess = false;
+  let visibleLinks = [];
 
-  for (let attempt = 0; attempt < MAX_PRODUCTS; attempt++) {
-    // Go back to search results page each time
-    if (attempt > 0) {
-      emit({ step: `Returning to search results for product #${attempt + 1}...` });
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await page.waitForTimeout(2000);
-    }
-
-    // Get all visible product links — run entirely in the browser (one CDP call).
-    const rawLinks = await page.evaluate(() => {
+  // Cache the product list once on attempt 0 — saves N-1 search re-navigations.
+  try {
+    visibleLinks = await page.evaluate(() => {
       const seen = new Set();
       const result = [];
       for (const a of document.querySelectorAll('a[href*="/products/"]')) {
@@ -763,13 +766,11 @@ async function testRentalCollateral(page, store, emit) {
         result.push(href);
       }
       return result;
-    }).catch(() => []);
-    const visibleLinks = rawLinks;
+    });
+  } catch (_) { visibleLinks = []; }
+  emit({ step: `Found ${visibleLinks.length} product(s) in search results` });
 
-    if (attempt === 0) {
-      emit({ step: `Found ${visibleLinks.length} product(s) in search results` });
-    }
-
+  for (let attempt = 0; attempt < MAX_PRODUCTS; attempt++) {
     if (attempt >= visibleLinks.length) {
       emit({ step: `Only ${visibleLinks.length} products available — no more to try` });
       break;
@@ -777,124 +778,115 @@ async function testRentalCollateral(page, store, emit) {
 
     const productHref = visibleLinks[attempt];
     const productUrl = productHref.startsWith('http') ? productHref : `${origin}${productHref}`;
-    emit({ step: `[Product ${attempt + 1}] Navigating to: ${productHref}` });
-    await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await page.waitForTimeout(1500);
 
-    const pdpShot = screenshotPath(store.newStore, 'rental-collateral', `03_product_${attempt + 1}`);
-    await page.screenshot({ path: pdpShot, fullPage: false });
-    emit({ screenshot: screenshotUrl(pdpShot), label: `Product ${attempt + 1}` });
+    try {
+      emit({ step: `[Product ${attempt + 1}] Navigating to: ${productHref}` });
+      await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(1500);
 
-    // Step 4: Look for the Print tab (it's a tab[type="button"] element)
-    emit({ step: `[Product ${attempt + 1}] Looking for Print tab...` });
-    const printTab = await page.$('[role="tab"]:has-text("Print"), button[type="button"]:has-text("Print")');
-
-    if (printTab) {
-      const tabVisible = await printTab.isVisible().catch(() => false);
-      if (tabVisible) {
-        emit({ step: `[Product ${attempt + 1}] Found Print tab — clicking...` });
-        await printTab.click();
-        await page.waitForTimeout(1000);
-
-        const printShot = screenshotPath(store.newStore, 'rental-collateral', `04_print_tab_${attempt + 1}`);
-        await page.screenshot({ path: printShot, fullPage: false });
-        emit({ screenshot: screenshotUrl(printShot), label: `Print tab (product ${attempt + 1})` });
+      // Only screenshot the FIRST attempt (PDP) and the SUCCESSFUL one.
+      // Per-attempt screenshots accumulate browser memory + emit work for nothing.
+      if (attempt === 0) {
+        const pdpShot = screenshotPath(store.newStore, 'rental-collateral', `03_product_${attempt + 1}`);
+        await page.screenshot({ path: pdpShot, fullPage: false }).catch(() => {});
+        emit({ screenshot: screenshotUrl(pdpShot), label: `Product ${attempt + 1}` });
       }
-    } else {
-      emit({ step: `[Product ${attempt + 1}] No Print tab — checking current view...` });
-    }
 
-    // Step 5: Look for Rent New / Rent Used
-    // The rental options are checkboxes with labels like "RENT USED" or "RENT NEW" (all caps)
-    emit({ step: `[Product ${attempt + 1}] Looking for Rent New / Rent Used...` });
+      // Step 4: Click the Print tab if present
+      emit({ step: `[Product ${attempt + 1}] Looking for Print tab...` });
+      const printClicked = await page.evaluate(() => {
+        const tabs = document.querySelectorAll('[role="tab"], button[type="button"]');
+        for (const t of tabs) {
+          const txt = (t.textContent || '').trim().toUpperCase();
+          if (txt === 'PRINT' || txt.startsWith('PRINT ')) {
+            if (t.offsetParent === null || t.offsetWidth === 0) continue;
+            t.click();
+            return true;
+          }
+        }
+        return false;
+      }).catch(() => false);
 
-    let rentOption = null;
+      if (printClicked) {
+        emit({ step: `[Product ${attempt + 1}] Clicked Print tab` });
+        await page.waitForTimeout(1000);
+      } else {
+        emit({ step: `[Product ${attempt + 1}] No Print tab — checking current view...` });
+      }
 
-    // Strategy 1: Find checkbox/label with RENT text (case-insensitive)
-    const rentCheckbox = await page.$('input[type="checkbox"][name*="rent" i], input[type="checkbox"][id*="rent" i]');
-    if (rentCheckbox) {
-      rentOption = rentCheckbox;
-    }
-
-    // Strategy 2: Find by label text containing RENT — run entirely inside the
-    // browser so we make ONE CDP call instead of one per element (a Shopify PDP
-    // can have 1000+ matching nodes; iterating them via Playwright handles stalls
-    // the event loop for minutes and triggers Railway OOM / timeout).
-    if (!rentOption) {
-      const rentSelector = await page.evaluate(() => {
+      // Step 5: Find AND click rent option in ONE evaluate (no stale handles).
+      emit({ step: `[Product ${attempt + 1}] Looking for Rent New / Rent Used...` });
+      const rentClicked = await page.evaluate(() => {
+        const checkbox = document.querySelector(
+          'input[type="checkbox"][name*="rent" i], input[type="checkbox"][id*="rent" i]'
+        );
+        if (checkbox && checkbox.offsetParent !== null) {
+          checkbox.click();
+          return checkbox.id || checkbox.name || 'rent-checkbox';
+        }
         const candidates = document.querySelectorAll(
-          'label, input[type="checkbox"], input[type="radio"], button, a, span, div[role="button"], [role="option"]'
+          'label, input[type="radio"], button, a, span, div[role="button"], [role="option"]'
         );
         for (const el of candidates) {
           const upper = (el.textContent || '').toUpperCase();
           if (!upper.includes('RENT NEW') && !upper.includes('RENT USED')) continue;
           if (el.offsetParent === null || el.offsetWidth === 0) continue;
-          // Return a unique-enough CSS selector so Playwright can re-acquire it
-          if (el.id) return `#${CSS.escape(el.id)}`;
-          // Build a nth-of-type path as a reliable fallback
-          let path = el.tagName.toLowerCase();
-          let parent = el.parentElement;
-          while (parent && parent !== document.body) {
-            const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName);
-            if (siblings.length > 1) {
-              path = `${parent.tagName.toLowerCase()} > ${path}:nth-of-type(${siblings.indexOf(el) + 1})`;
-            }
-            parent = parent.parentElement;
-            break; // one level is enough to disambiguate
-          }
-          return path;
+          el.click();
+          return upper.substring(0, 30);
         }
         return null;
-      });
+      }).catch(() => null);
 
-      if (rentSelector) {
-        rentOption = await page.$(rentSelector).catch(() => null);
-        if (rentOption) {
-          const foundText = await rentOption.textContent().catch(() => '');
-          emit({ step: `[Product ${attempt + 1}] Found: "${foundText.trim().substring(0, 50)}"` });
-        }
+      if (!rentClicked) {
+        emit({ step: `[Product ${attempt + 1}] No rental option — trying next product...` });
+        continue;
       }
-    }
+      emit({ step: `[Product ${attempt + 1}] Clicked rental option: "${rentClicked}"` });
+      await page.waitForTimeout(1000);
 
-    if (!rentOption) {
-      emit({ step: `[Product ${attempt + 1}] No rental option — trying next product...` });
+      // Step 6: Click Add to Bag in ONE evaluate
+      emit({ step: `[Product ${attempt + 1}] Looking for Add to Bag...` });
+      const addClicked = await page.evaluate(() => {
+        const buttons = document.querySelectorAll('button, input[type="submit"]');
+        for (const b of buttons) {
+          const txt = ((b.textContent || b.value) || '').trim().toUpperCase();
+          if (!(txt.includes('ADD TO BAG') || txt.includes('ADD TO CART'))) continue;
+          if (txt.includes('ADD COURSE')) continue;
+          if (b.disabled || b.offsetParent === null) continue;
+          b.click();
+          return txt.substring(0, 30);
+        }
+        const form = document.querySelector('form[action*="/cart/add"]');
+        if (form) {
+          const sb = form.querySelector('button[type="submit"], input[type="submit"]');
+          if (sb && !sb.disabled && sb.offsetParent !== null) { sb.click(); return 'FORM SUBMIT'; }
+        }
+        return null;
+      }).catch(() => null);
+
+      if (!addClicked) {
+        emit({ step: `[Product ${attempt + 1}] No Add to Bag button — trying next product...` });
+        continue;
+      }
+
+      emit({ step: `[Product ${attempt + 1}] Clicked Add to Bag: "${addClicked}"` });
+      // Capture rent-selected screenshot ONLY on success (cheap insurance for the report)
+      const rentShot = screenshotPath(store.newStore, 'rental-collateral', `05_rent_selected_${attempt + 1}`);
+      await page.screenshot({ path: rentShot, fullPage: false }).catch(() => {});
+      emit({ screenshot: screenshotUrl(rentShot), label: `Rent selected (product ${attempt + 1})` });
+
+      rentalSuccess = true;
+      break;
+    } catch (err) {
+      // Defensive: never let a single product attempt poison the whole test.
+      emit({ step: `[Product ${attempt + 1}] Error: ${(err.message || err).toString().substring(0, 120)} — trying next product...` });
+      // If the page itself is gone, abort the loop entirely.
+      if (/Target closed|Browser has been closed|Execution context/i.test(err.message || '')) {
+        emit({ step: 'Page/browser context lost — aborting product loop' });
+        break;
+      }
       continue;
     }
-
-    // Click rent option (use force:true since checkboxes can be visually hidden behind labels)
-    emit({ step: `[Product ${attempt + 1}] Clicking rental option...` });
-    try {
-      await rentOption.click({ timeout: 5000 });
-    } catch {
-      // If click fails, try clicking the parent label
-      const parent = await rentOption.$('xpath=..');
-      if (parent) await parent.click({ timeout: 5000 });
-    }
-    await page.waitForTimeout(1000);
-
-    const rentShot = screenshotPath(store.newStore, 'rental-collateral', `05_rent_selected_${attempt + 1}`);
-    await page.screenshot({ path: rentShot, fullPage: false });
-    emit({ screenshot: screenshotUrl(rentShot), label: `Rent selected (product ${attempt + 1})` });
-
-    // Step 6: Find and click Add to Bag immediately (no stale references)
-    emit({ step: `[Product ${attempt + 1}] Looking for Add to Bag...` });
-    const addBtn = await page.$(
-      'button[type="submit"]:has-text("Add to bag"), button[type="submit"]:has-text("Add to Bag"), ' +
-      'button:has-text("Add to Bag"), button:has-text("Add to bag"), ' +
-      'button:has-text("Add to Cart"), button:has-text("Add to cart"), ' +
-      'button[name="add"], [data-action="add-to-cart"], ' +
-      'form[action*="/cart/add"] button[type="submit"]'
-    );
-
-    if (!addBtn) {
-      emit({ step: `[Product ${attempt + 1}] No Add to Bag button — trying next product...` });
-      continue;
-    }
-
-    emit({ step: `[Product ${attempt + 1}] Clicking Add to Bag...` });
-    await addBtn.click();
-    rentalSuccess = true;
-    break;
   }
 
   if (!rentalSuccess) {
@@ -1046,38 +1038,31 @@ async function testDigitalDeliveryFee(page, store, emit) {
   await page.screenshot({ path: resultsShot, fullPage: false });
   emit({ screenshot: screenshotUrl(resultsShot), label: 'Search results' });
 
-  // Step 2: Try up to 5 products until we find one with a Digital variant
-  const MAX_PRODUCTS = 5;
+  // Step 2: Try up to 4 products until we find one with a Digital variant.
+  // Each iteration is wrapped in try/catch — single product errors never
+  // abort the whole test or crash the server.
+  const MAX_PRODUCTS = 4;
   let addedSuccess = false;
   let addedProductName = '';
 
+  // Cache the search-results product list once.
+  const visibleLinks = await page.evaluate(() => {
+    const seen = new Set();
+    const result = [];
+    for (const a of document.querySelectorAll('a[href*="/products/"]')) {
+      if (a.offsetParent === null || a.offsetWidth === 0) continue;
+      const href = a.getAttribute('href');
+      if (!href) continue;
+      const clean = href.split('?')[0];
+      if (seen.has(clean)) continue;
+      seen.add(clean);
+      result.push(href);
+    }
+    return result;
+  }).catch(() => []);
+  emit({ step: `Found ${visibleLinks.length} product(s) in search results` });
+
   for (let attempt = 0; attempt < MAX_PRODUCTS; attempt++) {
-    if (attempt > 0) {
-      emit({ step: `Returning to search results for product #${attempt + 1}...` });
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await page.waitForTimeout(2000);
-    }
-
-    // Get visible product links — single CDP call inside browser context.
-    const visibleLinks = await page.evaluate(() => {
-      const seen = new Set();
-      const result = [];
-      for (const a of document.querySelectorAll('a[href*="/products/"]')) {
-        if (a.offsetParent === null || a.offsetWidth === 0) continue;
-        const href = a.getAttribute('href');
-        if (!href) continue;
-        const clean = href.split('?')[0];
-        if (seen.has(clean)) continue;
-        seen.add(clean);
-        result.push(href);
-      }
-      return result;
-    }).catch(() => []);
-
-    if (attempt === 0) {
-      emit({ step: `Found ${visibleLinks.length} product(s) in search results` });
-    }
-
     if (attempt >= visibleLinks.length) {
       emit({ step: `Only ${visibleLinks.length} products available — no more to try` });
       break;
@@ -1085,108 +1070,117 @@ async function testDigitalDeliveryFee(page, store, emit) {
 
     const productHref = visibleLinks[attempt];
     const productUrl = productHref.startsWith('http') ? productHref : `${origin}${productHref}`;
-    emit({ step: `[Product ${attempt + 1}] Navigating to: ${productHref}` });
-    await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await page.waitForTimeout(1500);
 
-    // Hide Shopify preview bar
-    await page.evaluate(() => {
-      const bar = document.getElementById('preview-bar-iframe') || document.querySelector('[id*="preview-bar"]');
-      if (bar) bar.style.display = 'none';
-    });
+    try {
+      emit({ step: `[Product ${attempt + 1}] Navigating to: ${productHref}` });
+      await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(1500);
 
-    // Grab the product title
-    const titleEl = await page.$('h1');
-    addedProductName = titleEl ? (await titleEl.textContent().catch(() => '')).trim() : '';
+      await page.evaluate(() => {
+        const bar = document.getElementById('preview-bar-iframe') || document.querySelector('[id*="preview-bar"]');
+        if (bar) bar.style.display = 'none';
+      }).catch(() => {});
 
-    const pdpShot = screenshotPath(store.newStore, 'digital-delivery-fee', `02_product_${attempt + 1}`);
-    await page.screenshot({ path: pdpShot, fullPage: false });
-    emit({ screenshot: screenshotUrl(pdpShot), label: `Product ${attempt + 1}: ${addedProductName}` });
+      addedProductName = await page.evaluate(() => {
+        const h = document.querySelector('h1');
+        return h ? (h.textContent || '').trim() : '';
+      }).catch(() => '');
 
-    // Step A: Click Digital tab if present
-    const digitalClicked = await page.evaluate(() => {
-      const tabs = document.querySelectorAll('[role="tab"], button[type="button"]');
-      for (const tab of tabs) {
-        const text = (tab.textContent || '').trim();
-        if (/^Digital/i.test(text) && tab.offsetParent !== null && tab.offsetWidth > 0) {
-          tab.click();
-          return text;
-        }
+      // Only screenshot first attempt (not every failed one).
+      if (attempt === 0) {
+        const pdpShot = screenshotPath(store.newStore, 'digital-delivery-fee', `02_product_${attempt + 1}`);
+        await page.screenshot({ path: pdpShot, fullPage: false }).catch(() => {});
+        emit({ screenshot: screenshotUrl(pdpShot), label: `Product ${attempt + 1}: ${addedProductName}` });
       }
-      return null;
-    });
 
-    if (digitalClicked) {
-      emit({ step: `[Product ${attempt + 1}] Clicked Digital tab: "${digitalClicked}"` });
-      await page.waitForTimeout(1000);
-    } else {
-      emit({ step: `[Product ${attempt + 1}] No Digital tab found — trying next product...` });
+      // Step A: Click Digital tab if present
+      const digitalClicked = await page.evaluate(() => {
+        const tabs = document.querySelectorAll('[role="tab"], button[type="button"]');
+        for (const tab of tabs) {
+          const text = (tab.textContent || '').trim();
+          if (/^Digital/i.test(text) && tab.offsetParent !== null && tab.offsetWidth > 0) {
+            tab.click();
+            return text;
+          }
+        }
+        return null;
+      }).catch(() => null);
+
+      if (digitalClicked) {
+        emit({ step: `[Product ${attempt + 1}] Clicked Digital tab: "${digitalClicked}"` });
+        await page.waitForTimeout(1000);
+      } else {
+        emit({ step: `[Product ${attempt + 1}] No Digital tab found — trying next product...` });
+        continue;
+      }
+
+      // Step B: Click a Buy option
+      const buyClicked = await page.evaluate(() => {
+        const els = document.querySelectorAll('label, input[type="checkbox"], input[type="radio"], button, span, div[role="button"]');
+        for (const el of els) {
+          const text = (el.textContent || '').toUpperCase().trim();
+          if ((/^(BUY|RENT)(\s|$)/.test(text) || text.includes('BUY NEW') || text.includes('BUY USED') || text.includes('BUY DIGITAL'))
+              && el.offsetParent !== null && el.offsetWidth > 0) {
+            el.click();
+            return text.substring(0, 30);
+          }
+        }
+        return null;
+      }).catch(() => null);
+
+      if (buyClicked) {
+        emit({ step: `[Product ${attempt + 1}] Clicked buy option: "${buyClicked}"` });
+        await page.waitForTimeout(1000);
+      } else {
+        emit({ step: `[Product ${attempt + 1}] No buy option found — trying Add to Bag anyway...` });
+      }
+
+      // Step C: Click Add to Bag
+      const addClicked = await page.evaluate(() => {
+        const buttons = document.querySelectorAll('button');
+        for (const btn of buttons) {
+          const text = (btn.textContent || '').trim().toUpperCase();
+          if ((text.includes('ADD TO BAG') || text.includes('ADD TO CART'))
+              && !text.includes('ADD COURSE')
+              && btn.offsetParent !== null && btn.offsetWidth > 0 && !btn.disabled) {
+            btn.click();
+            return text.substring(0, 30);
+          }
+        }
+        return null;
+      }).catch(() => null);
+
+      if (!addClicked) {
+        emit({ step: `[Product ${attempt + 1}] Add to Bag button not found or disabled — trying next product...` });
+        continue;
+      }
+
+      emit({ step: `[Product ${attempt + 1}] Clicked: "${addClicked}"` });
+      await page.waitForTimeout(2000);
+
+      await page.evaluate(() => {
+        const closeBtn = document.querySelector('.cart-drawer__close, [aria-label="Close cart"], button.close, .drawer__close');
+        if (closeBtn) closeBtn.click();
+        const dialog = document.querySelector('dialog[open].cart-drawer__dialog');
+        if (dialog && dialog.close) dialog.close();
+      }).catch(() => {});
+      await page.waitForTimeout(500);
+
+      addedSuccess = true;
+
+      // Capture success screenshot only — failed attempts no longer leave junk on disk.
+      const addShot = screenshotPath(store.newStore, 'digital-delivery-fee', `03_added_${attempt + 1}`);
+      await page.screenshot({ path: addShot, fullPage: false }).catch(() => {});
+      emit({ screenshot: screenshotUrl(addShot), label: `Added to bag (product ${attempt + 1})` });
+      break;
+    } catch (err) {
+      emit({ step: `[Product ${attempt + 1}] Error: ${(err.message || err).toString().substring(0, 120)} — trying next product...` });
+      if (/Target closed|Browser has been closed|Execution context/i.test(err.message || '')) {
+        emit({ step: 'Page/browser context lost — aborting product loop' });
+        break;
+      }
       continue;
     }
-
-    // Step B: Click a Buy option (BUY, BUY NEW, BUY USED, BUY DIGITAL)
-    const buyClicked = await page.evaluate(() => {
-      const els = document.querySelectorAll('label, input[type="checkbox"], input[type="radio"], button, span, div[role="button"]');
-      for (const el of els) {
-        const text = (el.textContent || '').toUpperCase().trim();
-        if ((/^(BUY|RENT)(\s|$)/.test(text) || text.includes('BUY NEW') || text.includes('BUY USED') || text.includes('BUY DIGITAL'))
-            && el.offsetParent !== null && el.offsetWidth > 0) {
-          el.click();
-          return text.substring(0, 30);
-        }
-      }
-      return null;
-    });
-
-    if (buyClicked) {
-      emit({ step: `[Product ${attempt + 1}] Clicked buy option: "${buyClicked}"` });
-      await page.waitForTimeout(1000);
-    } else {
-      emit({ step: `[Product ${attempt + 1}] No buy option found — trying Add to Bag anyway...` });
-    }
-
-    const buyShot = screenshotPath(store.newStore, 'digital-delivery-fee', `02b_buy_selected_${attempt + 1}`);
-    await page.screenshot({ path: buyShot, fullPage: false });
-    emit({ screenshot: screenshotUrl(buyShot), label: `Buy selected (product ${attempt + 1})` });
-
-    // Step C: Click Add to Bag
-    const addClicked = await page.evaluate(() => {
-      const buttons = document.querySelectorAll('button');
-      for (const btn of buttons) {
-        const text = (btn.textContent || '').trim().toUpperCase();
-        if ((text.includes('ADD TO BAG') || text.includes('ADD TO CART'))
-            && !text.includes('ADD COURSE')
-            && btn.offsetParent !== null && btn.offsetWidth > 0 && !btn.disabled) {
-          btn.click();
-          return text.substring(0, 30);
-        }
-      }
-      return null;
-    });
-
-    if (!addClicked) {
-      emit({ step: `[Product ${attempt + 1}] Add to Bag button not found or disabled — trying next product...` });
-      continue;
-    }
-
-    emit({ step: `[Product ${attempt + 1}] Clicked: "${addClicked}"` });
-    await page.waitForTimeout(2000);
-
-    // Close cart drawer if it opened
-    await page.evaluate(() => {
-      const closeBtn = document.querySelector('.cart-drawer__close, [aria-label="Close cart"], button.close, .drawer__close');
-      if (closeBtn) closeBtn.click();
-      const dialog = document.querySelector('dialog[open].cart-drawer__dialog');
-      if (dialog && dialog.close) dialog.close();
-    });
-    await page.waitForTimeout(500);
-
-    addedSuccess = true;
-
-    const addShot = screenshotPath(store.newStore, 'digital-delivery-fee', `03_added_${attempt + 1}`);
-    await page.screenshot({ path: addShot, fullPage: false });
-    emit({ screenshot: screenshotUrl(addShot), label: `Added to bag (product ${attempt + 1})` });
-    break;
   }
 
   if (!addedSuccess) {

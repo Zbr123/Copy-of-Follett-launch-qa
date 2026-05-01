@@ -6,6 +6,19 @@ const { runAccessibilityScan } = require('./accessibility-scanner');
 const { chromium } = require('playwright');
 const sweepWorker = require('./sweep-worker');
 
+// ── CRITICAL: keep the Node process alive on stray errors ──
+// A single unhandled rejection (e.g. a Playwright callback firing after a
+// test moved on, a fetch in a closed page, browser OOM-kill on Railway)
+// would otherwise crash the whole process — dropping every active SSE
+// stream and surfacing as "Connection error: network error" in the UI.
+// Logging-and-continuing is the right choice for a long-running test runner.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && err.stack ? err.stack : err);
+});
+
 let queueApi = null;
 function getQueueApi() {
   if (!queueApi) queueApi = require('./lib/queue');
@@ -1426,10 +1439,18 @@ async function reconcileOrphanedRuns() {
   if (fixed > 0) console.log(`[server] reconciled ${fixed} orphaned run(s) on boot`);
 }
 
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   console.log(`QA Automation running at http://localhost:${PORT}`);
   sweepWorker.start();
   runCleanup();
   setInterval(runCleanup, CLEANUP_INTERVAL_MS);
   reconcileOrphanedRuns().catch((e) => console.warn('[server] reconcile failed:', e.message));
 });
+
+// Long-running SSE streams (test runs can take 10+ minutes per store).
+// Disable Node's request/headers timeouts so the OS, not Node, governs
+// connection lifetime. The 25s heartbeat keeps Railway's proxy happy.
+httpServer.requestTimeout = 0;
+httpServer.headersTimeout = 0;
+httpServer.keepAliveTimeout = 120000;
+httpServer.timeout = 0;
