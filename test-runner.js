@@ -5278,8 +5278,39 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     // CDP connection (Browserless, Bright Data Scraping Browser, etc.)
     // — same protocol the worker uses, so a single BROWSER_WS_URL env
     // var works for both code paths.
-    console.log(`[runTests] Connecting to remote browser: ${options.endpoint.replace(/:[^:@]*@/, ':***@')}`);
-    browser = await chromium.connectOverCDP(options.endpoint);
+    //
+    // Bright Data's Scraping Browser has cold-start + residential-proxy
+    // session setup that can take 60–120s on the first connection of
+    // the day or after inactivity. The Playwright default of 30s is
+    // too aggressive for this product — every cold start surfaces as
+    // "Connection error: network error" in the UI. We bump the timeout
+    // and add up to 2 retries with exponential backoff so a single
+    // flaky handshake doesn't fail the whole run.
+    const REMOTE_CONNECT_TIMEOUT_MS = Number(process.env.REMOTE_CONNECT_TIMEOUT_MS) || 120000;
+    const REMOTE_CONNECT_RETRIES = 3;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= REMOTE_CONNECT_RETRIES; attempt++) {
+      try {
+        console.log(`[runTests] Connecting to remote browser (attempt ${attempt}/${REMOTE_CONNECT_RETRIES}): ${options.endpoint.replace(/:[^:@]*@/, ':***@')}`);
+        sendEvent({ type: 'browser-info', message: `Connecting to remote browser (attempt ${attempt}/${REMOTE_CONNECT_RETRIES})...` });
+        browser = await chromium.connectOverCDP(options.endpoint, { timeout: REMOTE_CONNECT_TIMEOUT_MS });
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[runTests] connectOverCDP attempt ${attempt} failed: ${err.message}`);
+        sendEvent({ type: 'browser-info', message: `Remote browser connect failed (attempt ${attempt}): ${err.message.substring(0, 120)}` });
+        if (attempt < REMOTE_CONNECT_RETRIES) {
+          const backoffMs = 2000 * attempt; // 2s, 4s
+          await new Promise((r) => setTimeout(r, backoffMs));
+        }
+      }
+    }
+    if (!browser) {
+      const msg = `Remote browser unavailable after ${REMOTE_CONNECT_RETRIES} attempts: ${lastErr ? lastErr.message : 'unknown error'}. Check Bright Data dashboard for quota/session limits, or set REMOTE_BROWSER_ENABLED=0 to fall back to local Chromium.`;
+      sendEvent({ type: 'error', message: msg });
+      throw new Error(msg);
+    }
     // Tag the remote browser so `runStoreTests` can detect remote mode
     // even when env vars aren't visible / the helper is called from a
     // worker that didn't set them. Safe no-op on the local-launch and

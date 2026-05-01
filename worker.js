@@ -144,22 +144,38 @@ if (USE_REMOTE_BROWSER) {
   }
 }
 
+// Bright Data Scraping Browser cold-start + residential proxy session
+// setup can take 60–120s. Default Playwright timeout is 30s — too short.
+// Wrap connectOverCDP with a longer timeout and retries so an intermittent
+// handshake failure doesn't fail the whole job.
+const REMOTE_CONNECT_TIMEOUT_MS = Number(process.env.REMOTE_CONNECT_TIMEOUT_MS) || 120000;
+const REMOTE_CONNECT_RETRIES = 3;
+
+async function connectRemoteBrowserWithRetry(label) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= REMOTE_CONNECT_RETRIES; attempt++) {
+    try {
+      console.log(`[worker] connecting ${label} to remote CDP (attempt ${attempt}/${REMOTE_CONNECT_RETRIES})...`);
+      const browser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL, { timeout: REMOTE_CONNECT_TIMEOUT_MS });
+      return browser;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[worker] ${label} connectOverCDP attempt ${attempt} failed: ${err.message}`);
+      if (attempt < REMOTE_CONNECT_RETRIES) {
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+      }
+    }
+  }
+  throw new Error(`Remote browser unavailable after ${REMOTE_CONNECT_RETRIES} attempts: ${lastErr ? lastErr.message : 'unknown'}`);
+}
+
 // Remote mode: connect fresh per job. Browserless (and similar CDP
 // providers) enforce a per-session timeout — reusing one connection
 // across a multi-hour run is not viable. Local mode: keep the cached
 // shared browser (launch is expensive, and there's no session cap).
 async function getStoreTestBrowser() {
   if (USE_REMOTE_BROWSER) {
-    console.log('[worker] connecting store-test browser to remote CDP...');
-    // Use vanilla playwright — the stealth plugin patches launch args,
-    // which don't apply to an already-running remote browser. Stealth
-    // is handled server-side by the remote provider.
-    const browser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
-    // Tag the remote browser so test-runner.js → runStoreTests can
-    // detect remote mode (Bright Data) and:
-    //   • reuse the provider's existing context instead of newContext()
-    //   • skip fingerprint overrides (UA / viewport / locale)
-    //   • skip manual Cloudflare/Turnstile handling
+    const browser = await connectRemoteBrowserWithRetry('store-test browser');
     browser.__isRemoteBrowser = true;
     browser.on('disconnected', () => {
       console.warn('[worker] store-test browser disconnected (remote per-job session ended)');
@@ -201,10 +217,7 @@ async function getStoreTestBrowser() {
 
 async function getAdaScanBrowser() {
   if (USE_REMOTE_BROWSER) {
-    console.log('[worker] connecting ada-scan browser to remote CDP...');
-    const browser = await chromiumVanilla.connectOverCDP(BROWSER_WS_URL);
-    // Same flag as the store-test browser; lets any downstream code
-    // path detect Bright Data without re-reading env vars.
+    const browser = await connectRemoteBrowserWithRetry('ada-scan browser');
     browser.__isRemoteBrowser = true;
     browser.on('disconnected', () => {
       console.warn('[worker] ada-scan browser disconnected (remote per-job session ended)');
