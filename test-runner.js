@@ -4573,8 +4573,8 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
   // Bright Data and passes the browser in still gets remote-friendly
   // behavior, even if env vars were not re-checked here.
   const isRemoteBrowser =
-    process.env.REMOTE_BROWSER_ENABLED === '1' ||
-    (browserOrCtx && browserOrCtx.__isRemoteBrowser === true);
+    (browserOrCtx && browserOrCtx.__isRemoteBrowser === true) ||
+    (process.env.REMOTE_BROWSER_ENABLED === '1' && !!process.env.BROWSER_WS_URL);
 
   /* ── OLD context-creation logic (commented out for easy revert) ──
   const useRemoteBrowser =
@@ -4620,18 +4620,9 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     context = browserOrCtx; // already a BrowserContext
     ownsContext = false;
   } else if (isRemoteBrowser) {
-    // Bright Data (and most CDP-attached managed browsers) expose at
-    // least one ready-to-use context after connectOverCDP. Reuse it.
-    const existingContexts =
-      typeof browserOrCtx.contexts === 'function' ? browserOrCtx.contexts() : [];
-    context = existingContexts[0];
-    if (!context) {
-      // Extremely rare safe fallback: provider didn't open a default
-      // context. Use a bare newContext() with NO options so we don't
-      // override the provider's fingerprint.
-      context = await browserOrCtx.newContext();
-    }
-    ownsContext = false; // never close a context we didn't create
+    const contexts = browserOrCtx.contexts ? browserOrCtx.contexts() : [];
+    context = contexts[0] || browserOrCtx;
+    ownsContext = false;
   } else {
     context = await browserOrCtx.newContext({
       viewport: { width: 1920, height: 1080 },
@@ -4963,11 +4954,9 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
   }
 
   } finally {
-    if (ownsContext) {
+    if (ownsContext && context) {
       try { await context.close(); } catch (_) {}
-    } else {
-      // Shared persistent context: close the page but keep cookies alive
-      // for the next store. Closing the page releases memory.
+    } else if (page) {
       try { await page.close(); } catch (_) {}
     }
   }
@@ -5325,12 +5314,10 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     // worker that didn't set them. Safe no-op on the local-launch and
     // persistent-context paths below (we never tag those).
     browser.__isRemoteBrowser = true;
-    console.log('[runTests] Remote browser connected successfully');
     sendEvent({ type: 'browser-info', message: `Connected to remote browser: ${options.endpoint.replace(/\?.*$/, '')}` });
   } else if (options.persistent) {
     const dataDir = options.userDataDir || path.join(DATA_DIR, '.browser-data');
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    console.log(`[runTests] Launching persistent context @ ${dataDir}`);
     sharedContext = await chromium.launchPersistentContext(dataDir, {
       headless: !headful,
       viewport: { width: 1920, height: 1080 },
@@ -5361,16 +5348,11 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
         const store = queue.shift();
         const target = sharedContext || browser;
         const promise = runStoreTests(target, store, testIds, sendEvent, { sharedContext: !!sharedContext })
-          .catch(err => {
-            sendEvent({ type: 'error', message: `Store ${store.newStore} failed: ${err.message}` });
-          })
+          .catch(err => sendEvent({ type: 'error', message: `Store ${store.newStore} failed: ${err.message}` }))
           .finally(() => {
             running.delete(promise);
-            if (queue.length > 0) {
-              startNext();
-            } else if (running.size === 0) {
-              resolve();
-            }
+            if (queue.length > 0) startNext();
+            else if (running.size === 0) resolve();
           });
         running.add(promise);
       }
@@ -5379,12 +5361,8 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
     startNext();
   });
 
-  if (sharedContext) {
-    try { await sharedContext.close(); } catch (_) {}
-  }
-  if (browser) {
-    try { await browser.close(); } catch (_) {}
-  }
+  if (sharedContext) try { await sharedContext.close(); } catch (_) {}
+  if (browser) try { await browser.close(); } catch (_) {}
 }
 
 module.exports = { runTests, runStoreTests, TEST_REGISTRY };
