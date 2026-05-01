@@ -158,21 +158,24 @@ async function getVisibleProductLinks(page) {
 }
 
 async function trySelectPurchaseOption(page) {
-  const allElements = await page.$$('label, input[type="checkbox"], input[type="radio"]');
-  for (const el of allElements) {
-    const text = await el.textContent().catch(() => '');
-    const upperText = (text || '').toUpperCase().trim();
-    if (/^(BUY|RENT)(\s|$)/.test(upperText) || upperText.includes('BUY NEW') || upperText.includes('BUY USED') || upperText.includes('RENT NEW') || upperText.includes('RENT USED')) {
-      const vis = await el.isVisible().catch(() => false);
-      if (!vis) continue;
-      try {
-        await el.click({ timeout: 2000 });
-        await page.waitForTimeout(250);
-        return upperText;
-      } catch {}
+  // Run the search inside the browser — one CDP call instead of one per element.
+  const result = await page.evaluate(() => {
+    const candidates = document.querySelectorAll('label, input[type="checkbox"], input[type="radio"]');
+    for (const el of candidates) {
+      const upper = (el.textContent || '').toUpperCase().trim();
+      if (
+        !/^(BUY|RENT)(\s|$)/.test(upper) &&
+        !upper.includes('BUY NEW') && !upper.includes('BUY USED') &&
+        !upper.includes('RENT NEW') && !upper.includes('RENT USED')
+      ) continue;
+      if (el.offsetParent === null || el.offsetWidth === 0) continue;
+      el.click();
+      return upper.substring(0, 50);
     }
-  }
-  return null;
+    return null;
+  });
+  if (result) await page.waitForTimeout(250);
+  return result;
 }
 
 async function clickAddToCart(page) {
@@ -601,16 +604,16 @@ async function testCollectionPage(page, store, emit) {
   // Strategy: find collection links in the store's navigation, fall back to /collections/all
   let collectionUrl = null;
 
-  const navCollectionLinks = await page.$$('a[href*="/collections/"]');
-  if (navCollectionLinks.length > 0) {
-    for (const link of navCollectionLinks) {
-      const href = await link.getAttribute('href');
-      if (href && href.match(/\/collections\/[^/?]+/)) {
-        collectionUrl = buildCollectionUrl(href);
-        emit({ step: `Found collection in navigation: ${href}` });
-        break;
-      }
+  const firstCollHref = await page.evaluate(() => {
+    for (const a of document.querySelectorAll('a[href*="/collections/"]')) {
+      const href = a.getAttribute('href') || '';
+      if (/\/collections\/[^/?]+/.test(href)) return href;
     }
+    return null;
+  });
+  if (firstCollHref) {
+    collectionUrl = buildCollectionUrl(firstCollHref);
+    emit({ step: `Found collection in navigation: ${firstCollHref}` });
   }
 
   if (!collectionUrl) {
@@ -727,20 +730,22 @@ async function testRentalCollateral(page, store, emit) {
       await page.waitForTimeout(2000);
     }
 
-    // Get all visible product links on the search page right now
-    const productLinks = await page.$$('a[href*="/products/"]');
-    const visibleLinks = [];
-    const seenPaths = new Set();
-
-    for (const link of productLinks) {
-      const visible = await link.isVisible().catch(() => false);
-      if (!visible) continue;
-      const href = await link.getAttribute('href');
-      const cleanPath = href.split('?')[0];
-      if (seenPaths.has(cleanPath)) continue;
-      seenPaths.add(cleanPath);
-      visibleLinks.push(href);
-    }
+    // Get all visible product links — run entirely in the browser (one CDP call).
+    const rawLinks = await page.evaluate(() => {
+      const seen = new Set();
+      const result = [];
+      for (const a of document.querySelectorAll('a[href*="/products/"]')) {
+        if (a.offsetParent === null || a.offsetWidth === 0) continue;
+        const href = a.getAttribute('href');
+        if (!href) continue;
+        const clean = href.split('?')[0];
+        if (seen.has(clean)) continue;
+        seen.add(clean);
+        result.push(href);
+      }
+      return result;
+    }).catch(() => []);
+    const visibleLinks = rawLinks;
 
     if (attempt === 0) {
       emit({ step: `Found ${visibleLinks.length} product(s) in search results` });
@@ -792,19 +797,42 @@ async function testRentalCollateral(page, store, emit) {
       rentOption = rentCheckbox;
     }
 
-    // Strategy 2: Find by label text containing RENT (case-insensitive search)
+    // Strategy 2: Find by label text containing RENT — run entirely inside the
+    // browser so we make ONE CDP call instead of one per element (a Shopify PDP
+    // can have 1000+ matching nodes; iterating them via Playwright handles stalls
+    // the event loop for minutes and triggers Railway OOM / timeout).
     if (!rentOption) {
-      const allElements = await page.$$('label, input[type="checkbox"], input[type="radio"], button, a, span, div[role="button"], [role="option"]');
-      for (const el of allElements) {
-        const text = await el.textContent().catch(() => '');
-        const upperText = (text || '').toUpperCase();
-        if (upperText.includes('RENT NEW') || upperText.includes('RENT USED')) {
-          const vis = await el.isVisible().catch(() => false);
-          if (vis) {
-            rentOption = el;
-            emit({ step: `[Product ${attempt + 1}] Found: "${text.trim().substring(0, 50)}"` });
-            break;
+      const rentSelector = await page.evaluate(() => {
+        const candidates = document.querySelectorAll(
+          'label, input[type="checkbox"], input[type="radio"], button, a, span, div[role="button"], [role="option"]'
+        );
+        for (const el of candidates) {
+          const upper = (el.textContent || '').toUpperCase();
+          if (!upper.includes('RENT NEW') && !upper.includes('RENT USED')) continue;
+          if (el.offsetParent === null || el.offsetWidth === 0) continue;
+          // Return a unique-enough CSS selector so Playwright can re-acquire it
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          // Build a nth-of-type path as a reliable fallback
+          let path = el.tagName.toLowerCase();
+          let parent = el.parentElement;
+          while (parent && parent !== document.body) {
+            const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName);
+            if (siblings.length > 1) {
+              path = `${parent.tagName.toLowerCase()} > ${path}:nth-of-type(${siblings.indexOf(el) + 1})`;
+            }
+            parent = parent.parentElement;
+            break; // one level is enough to disambiguate
           }
+          return path;
+        }
+        return null;
+      });
+
+      if (rentSelector) {
+        rentOption = await page.$(rentSelector).catch(() => null);
+        if (rentOption) {
+          const foundText = await rentOption.textContent().catch(() => '');
+          emit({ step: `[Product ${attempt + 1}] Found: "${foundText.trim().substring(0, 50)}"` });
         }
       }
     }
@@ -1011,20 +1039,21 @@ async function testDigitalDeliveryFee(page, store, emit) {
       await page.waitForTimeout(2000);
     }
 
-    // Get visible product links
-    const productLinks = await page.$$('a[href*="/products/"]');
-    const visibleLinks = [];
-    const seenPaths = new Set();
-
-    for (const link of productLinks) {
-      const visible = await link.isVisible().catch(() => false);
-      if (!visible) continue;
-      const href = await link.getAttribute('href');
-      const cleanPath = href.split('?')[0];
-      if (seenPaths.has(cleanPath)) continue;
-      seenPaths.add(cleanPath);
-      visibleLinks.push(href);
-    }
+    // Get visible product links — single CDP call inside browser context.
+    const visibleLinks = await page.evaluate(() => {
+      const seen = new Set();
+      const result = [];
+      for (const a of document.querySelectorAll('a[href*="/products/"]')) {
+        if (a.offsetParent === null || a.offsetWidth === 0) continue;
+        const href = a.getAttribute('href');
+        if (!href) continue;
+        const clean = href.split('?')[0];
+        if (seen.has(clean)) continue;
+        seen.add(clean);
+        result.push(href);
+      }
+      return result;
+    }).catch(() => []);
 
     if (attempt === 0) {
       emit({ step: `Found ${visibleLinks.length} product(s) in search results` });
@@ -2463,15 +2492,17 @@ async function testHomepagePlpPdp(page, store, emit) {
   // ── Navigate to a collection page for checks 3-4 ──
   emit({ step: 'Finding a collection page...' });
 
-  // Find a collection link from navigation
+  // Find a collection link from navigation — single CDP call.
   let collectionUrl = null;
-  const navCollectionLinks = await page.$$('a[href*="/collections/"]');
-  for (const link of navCollectionLinks) {
-    const href = await link.getAttribute('href');
-    if (href && href.match(/\/collections\/[^/?]+/)) {
-      collectionUrl = href.startsWith('http') ? href : `${origin}${href.split('?')[0]}`;
-      break;
+  const firstCollHref2 = await page.evaluate(() => {
+    for (const a of document.querySelectorAll('a[href*="/collections/"]')) {
+      const href = a.getAttribute('href') || '';
+      if (/\/collections\/[^/?]+/.test(href)) return href;
     }
+    return null;
+  });
+  if (firstCollHref2) {
+    collectionUrl = firstCollHref2.startsWith('http') ? firstCollHref2 : `${origin}${firstCollHref2.split('?')[0]}`;
   }
   if (!collectionUrl) collectionUrl = `${origin}/collections/all`;
 
@@ -2636,19 +2667,20 @@ async function testHomepagePlpPdp(page, store, emit) {
       await page.waitForTimeout(2000);
     }
 
-    const productLinks = await page.$$('a[href*="/products/"]');
-    const visibleLinks = [];
-    const seenPaths = new Set();
-
-    for (const link of productLinks) {
-      const visible = await link.isVisible().catch(() => false);
-      if (!visible) continue;
-      const href = await link.getAttribute('href');
-      const cleanPath = href.split('?')[0];
-      if (seenPaths.has(cleanPath)) continue;
-      seenPaths.add(cleanPath);
-      visibleLinks.push(href);
-    }
+    const visibleLinks = await page.evaluate(() => {
+      const seen = new Set();
+      const result = [];
+      for (const a of document.querySelectorAll('a[href*="/products/"]')) {
+        if (a.offsetParent === null || a.offsetWidth === 0) continue;
+        const href = a.getAttribute('href');
+        if (!href) continue;
+        const clean = href.split('?')[0];
+        if (seen.has(clean)) continue;
+        seen.add(clean);
+        result.push(href);
+      }
+      return result;
+    }).catch(() => []);
 
     if (attempt >= visibleLinks.length) {
       emit({ step: `Only ${visibleLinks.length} products available` });
