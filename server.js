@@ -107,6 +107,14 @@ app.post('/api/run-tests', async (req, res) => {
   res.flushHeaders();
   res.write(`data: ${JSON.stringify({ type: 'connecting' })}\n\n`);
 
+  // Railway (and most reverse proxies) close HTTP connections that are idle
+  // for ~60s. Send an SSE comment every 25s so the pipe stays alive even
+  // when a slow test step emits no events for a long stretch.
+  const heartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); } catch (_) {}
+  }, 25000);
+  req.on('close', () => clearInterval(heartbeat));
+
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
   const runFile = path.join(RUNS_DIR, `${runId}.json`);
   const runData = {
@@ -173,6 +181,7 @@ app.post('/api/run-tests', async (req, res) => {
     try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
     try { res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`); } catch (_) {}
   } finally {
+    clearInterval(heartbeat);
     try { res.end(); } catch (_) {}
   }
 });
@@ -191,6 +200,11 @@ app.post('/api/accessibility-scan', async (req, res) => {
   res.flushHeaders();
   res.write(`data: ${JSON.stringify({ type: 'connecting' })}\n\n`);
 
+  const adaHeartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); } catch (_) {}
+  }, 25000);
+  req.on('close', () => clearInterval(adaHeartbeat));
+
   const runId = `ada-${new Date().toISOString().replace(/[:.]/g, '-')}`;
 
   const sendEvent = (data) => {
@@ -205,6 +219,7 @@ app.post('/api/accessibility-scan', async (req, res) => {
     console.error('[api/accessibility-scan] error:', err);
     try { res.write(`data: ${JSON.stringify({ type: 'ada-error', message: err.message })}\n\n`); } catch (_) {}
   } finally {
+    clearInterval(adaHeartbeat);
     try { res.end(); } catch (_) {}
   }
 });
