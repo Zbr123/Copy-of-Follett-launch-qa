@@ -4596,10 +4596,18 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
   // Local mode: keep the original ephemeral newContext() with the same
   // viewport/userAgent we shipped before. (Rule: don't change local
   // behavior.)
+  // Use `let` so `ensurePageAlive()` can swap these out if Bright Data's
+  // session expires mid-run. A Scraping Browser session has a server-
+  // side lifetime cap; once it ends, the existing page/context/browser
+  // handles all throw "Target page, context or browser has been closed"
+  // on the very next call. When that happens we reconnect to Bright
+  // Data and replace all three so the remaining tests can continue.
+  let browser = browserOrCtx; // in remote/local modes this IS the browser
   let context;
   let ownsContext = false;
   if (opts.sharedContext) {
     context = browserOrCtx; // already a BrowserContext
+    browser = context.browser ? context.browser() : null;
     ownsContext = false;
   } else if (isRemoteBrowser) {
     const contexts = browserOrCtx.contexts ? browserOrCtx.contexts() : [];
@@ -4619,7 +4627,7 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     await installBandwidthBlocking(context);
   }
 
-  const page = wrapPageForCapture(await context.newPage());
+  let page = wrapPageForCapture(await context.newPage());
 
   // Bright Data's residential proxy + server-side CF solving can take
   // 30–90s on a hard challenge. Give every Playwright wait/navigation
@@ -4630,8 +4638,73 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     page.setDefaultNavigationTimeout(120000);
     page.setDefaultTimeout(120000);
   }
+
+  // Hoisted above `ensurePageAlive` so it's definitely initialised
+  // before any call that references it (e.g. during a reconnect that
+  // emits progress events tagged with the currently-running test).
   let activeTestId = '';
   let activeTestName = '';
+
+  // ── Session recovery: reconnect to Bright Data if the session dies ──
+  // Returns true on success, false if reconnection is impossible (non-
+  // remote mode, no reconnect callback available, or max attempts hit).
+  const reconnectFn = opts.reconnect; // () => Promise<Browser> — provided by runTests in remote mode
+  async function ensurePageAlive() {
+    const pageDead = !page || page.isClosed();
+    const ctxAlive = context && typeof context.browser === 'function' ? context.browser() && context.browser().isConnected() : true;
+    const browserAlive = browser && typeof browser.isConnected === 'function' ? browser.isConnected() : true;
+
+    if (!pageDead && browserAlive && ctxAlive) return true;
+
+    // We detected a dead session. Only remote mode can recover — local
+    // mode means the whole Chromium process died, which is unrecoverable
+    // here without re-entering runTests.
+    if (!isRemoteBrowser || !reconnectFn) return false;
+
+    sendEvent({
+      type: 'test-progress',
+      store: store.newStore,
+      testId: activeTestId,
+      step: '⚠ Browser session died — reconnecting to Bright Data...',
+    });
+
+    try {
+      // Close any stale handles (best-effort).
+      try { if (page && !page.isClosed()) await page.close(); } catch (_) {}
+      try { if (browser && browser.isConnected && browser.isConnected()) await browser.close(); } catch (_) {}
+
+      const fresh = await reconnectFn();
+      browser = fresh;
+      browser.__isRemoteBrowser = true;
+
+      const contexts = browser.contexts ? browser.contexts() : [];
+      context = contexts[0] || browser;
+      ownsContext = false;
+
+      page = wrapPageForCapture(await context.newPage());
+      page.setDefaultNavigationTimeout(120000);
+      page.setDefaultTimeout(120000);
+
+      // Re-apply the CF-aware page.goto patch on the fresh page.
+      applyGotoPatch(page);
+
+      sendEvent({
+        type: 'test-progress',
+        store: store.newStore,
+        testId: activeTestId,
+        step: '✓ Reconnected — resuming tests',
+      });
+      return true;
+    } catch (err) {
+      sendEvent({
+        type: 'test-progress',
+        store: store.newStore,
+        testId: activeTestId,
+        step: `✗ Reconnect failed: ${err.message.substring(0, 200)}`,
+      });
+      return false;
+    }
+  }
 
   const emitActiveProgress = (step, extra = {}) => {
     sendEvent({
@@ -4644,93 +4717,70 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
     });
   };
 
-  // Patch page.goto:
+  // Patch page.goto. Extracted into a reusable function so we can re-
+  // apply it to a fresh page after `ensurePageAlive()` reconnects.
   //   • Remote mode (Bright Data / managed browser): trust the provider
   //     to solve CF server-side. Our DOM-based detector false-positives
   //     on pages that embed Turnstile as an anti-fraud widget (cart,
   //     checkout, filtered collections, login) because the script tags
   //     and iframe hosts ship in the static HTML even when there is no
   //     active challenge. Running the retry loop on top of a working
-  //     provider only adds latency and spurious failures. The 3-minute
-  //     timeout matches Bright Data's reference script — hard CF
-  //     challenges behind residential proxies can legitimately take
-  //     30–90s to resolve.
+  //     provider only adds latency and spurious failures.
   //   • Local mode: keep the full retry loop — local Chromium has no
   //     server-side unlocker, so we have to detect and retry ourselves.
-  const originalGoto = page.goto.bind(page);
-  if (isRemoteBrowser) {
-    // Force 120s timeout in remote mode. Many page.goto calls in test
-    // bodies pass a hardcoded `timeout: 10000-30000` that was tuned for
-    // local headless Chromium; on Bright Data's residential + CF-solving
-    // path those values are far too tight and cause spurious navigation
-    // timeouts. Spread `options` first so our 120s timeout wins, but
-    // preserve everything else the caller passes (waitUntil, referer,
-    // etc.).
-    //
-    // NOTE: manual Cloudflare detection (isCloudflareChallenge),
-    // Turnstile click-solving (trySolveTurnstile), and the goto retry
-    // loop are intentionally NOT invoked in this branch — Bright Data
-    // resolves CF/Turnstile server-side, and our DOM-based detector
-    // false-positives on pages that just embed Turnstile as a fraud
-    // widget (cart/checkout/login/filtered collections).
-    page.goto = async function (url, options = {}) {
-      return originalGoto(url, { ...options, timeout: 120000 });
-    };
-  } else {
+  function applyGotoPatch(p) {
+    const originalGoto = p.goto.bind(p);
+    if (isRemoteBrowser) {
+      p.goto = async function (url, options = {}) {
+        return originalGoto(url, { ...options, timeout: 120000 });
+      };
+      return;
+    }
     const MAX_CF_RETRIES = 2;
-    page.goto = async function (url, options = {}) {
+    p.goto = async function (url, options = {}) {
       const urlString = typeof url === 'string' ? url : String(url);
       let response = await originalGoto(url, options);
 
       for (let attempt = 0; attempt < MAX_CF_RETRIES; attempt++) {
-        if (!(await isCloudflareChallenge(page))) return response;
+        if (!(await isCloudflareChallenge(p))) return response;
 
         emitActiveProgress(`Cloudflare challenge detected (attempt ${attempt + 1}/${MAX_CF_RETRIES})`, {
           url: urlString,
           challenge: true,
         });
 
-        // Step 1: Try clicking the Turnstile checkbox if present
-        const solved = await trySolveTurnstile(page, 6000);
+        const solved = await trySolveTurnstile(p, 6000);
         if (solved) {
           emitActiveProgress('Cloudflare challenge resolved via Turnstile.', {
             url: urlString,
             challenge: true,
           });
-          await page.waitForTimeout(750);
+          await p.waitForTimeout(750);
           return response;
         }
 
-        // Step 2: Wait for auto-resolve (some challenges resolve without interaction)
         try {
-          await page.waitForFunction(
+          await p.waitForFunction(
             () => !document.body.innerText.includes('Verify you are human') &&
                   !document.body.innerText.includes('Just a moment') &&
                   !document.body.innerText.includes('needs to be verified') &&
                   !document.body.innerText.includes('Checking your browser'),
             { timeout: 8000 }
           );
-          await page.waitForTimeout(750);
-          if (!(await isCloudflareChallenge(page))) return response;
+          await p.waitForTimeout(750);
+          if (!(await isCloudflareChallenge(p))) return response;
         } catch {}
 
-        // Step 3: Retry the full navigation with a backoff delay
         const backoff = 1500 * (attempt + 1);
         emitActiveProgress(`Challenge persisted — retrying in ${(backoff / 1000).toFixed(1)}s`, {
           url: urlString,
           challenge: true,
         });
-        await page.waitForTimeout(backoff);
+        await p.waitForTimeout(backoff);
         response = await originalGoto(url, options);
       }
 
-      // Final check — if still stuck, throw. Letting the test proceed
-      // against a CF challenge page just wastes another ~5 min on
-      // selector waits that will never succeed. Throwing here fails the
-      // current test fast; the outer retry logic in runStoreTests will
-      // attempt it once more, and if that also fails, login is marked
-      // failed and every remaining test for this store is skipped.
-      if (await isCloudflareChallenge(page)) {
+      if (await isCloudflareChallenge(p)) {
         const err = new Error(`Cloudflare blocked navigation to ${urlString} after ${MAX_CF_RETRIES} attempts`);
         err.cloudflareBlocked = true;
         err.blockedUrl = urlString;
@@ -4740,6 +4790,7 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
       return response;
     };
   }
+  applyGotoPatch(page);
 
   let loginDone = false;
 
@@ -4831,6 +4882,35 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
       startedAt: new Date(testStartedAt).toISOString(),
     });
 
+    // ── Health check before each test ──
+    // If Bright Data's session has died between tests, reconnect now
+    // instead of letting the test throw "Target ... has been closed" on
+    // its very first page.goto. On remote mode with the reconnect
+    // callback this transparently recovers; on local mode it's a no-op.
+    const aliveBefore = await ensurePageAlive();
+    if (!aliveBefore) {
+      sendEvent({
+        type: 'test-result',
+        store: store.newStore,
+        testId,
+        durationMs: Date.now() - testStartedAt,
+        durationSec: Number(((Date.now() - testStartedAt) / 1000).toFixed(1)),
+        passed: false,
+        message: 'Browser session lost and could not be recovered — skipping remaining tests for this store',
+      });
+      // Skip every remaining test for this store — the page is dead.
+      for (const remainingId of testIds.slice(testIds.indexOf(testId) + 1)) {
+        sendEvent({
+          type: 'test-result',
+          store: store.newStore,
+          testId: remainingId,
+          passed: false,
+          message: 'Skipped — browser session lost',
+        });
+      }
+      break;
+    }
+
     // Run test with 1 retry on failure
     let result;
     let retried = false;
@@ -4893,6 +4973,13 @@ async function runStoreTests(browserOrCtx, store, testIds, sendEvent, opts = {})
       }
       try {
         if (err.cloudflareBlocked) throw err;
+        // If the failure was a dead session ("Target page, context or
+        // browser has been closed"), reconnect before the retry so we
+        // don't just re-throw instantly on the same dead page.
+        if (/Target (?:page|closed)|Browser has been closed|Execution context was destroyed/i.test(err.message || '')) {
+          const recovered = await ensurePageAlive();
+          if (!recovered) throw err;
+        }
         result = await test.run(page, store, (data) =>
           sendEvent({ type: 'test-progress', store: store.newStore, testId, ...data })
         );
@@ -5274,31 +5361,29 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
   let browser = null;
   let sharedContext = null;
 
-  if (options.endpoint) {
-    // CDP connection (Browserless, Bright Data Scraping Browser, etc.)
-    // — same protocol the worker uses, so a single BROWSER_WS_URL env
-    // var works for both code paths.
-    //
-    // Bright Data's Scraping Browser has cold-start + residential-proxy
-    // session setup that can take 60–120s on the first connection of
-    // the day or after inactivity. The Playwright default of 30s is
-    // too aggressive for this product — every cold start surfaces as
-    // "Connection error: network error" in the UI. We bump the timeout
-    // and add up to 2 retries with exponential backoff so a single
-    // flaky handshake doesn't fail the whole run.
-    const REMOTE_CONNECT_TIMEOUT_MS = Number(process.env.REMOTE_CONNECT_TIMEOUT_MS) || 120000;
-    const REMOTE_CONNECT_RETRIES = 3;
+  // Bright Data's Scraping Browser has cold-start + residential-proxy
+  // session setup that can take 60–120s on the first connection of the
+  // day or after inactivity. The Playwright default of 30s is too
+  // aggressive — every cold start used to surface as "Connection
+  // error: network error" in the UI. We bump the timeout and add
+  // retries with exponential backoff so a single flaky handshake
+  // doesn't fail the whole run. Extracted into a closure so
+  // `runStoreTests` can reuse the exact same logic when it needs to
+  // reconnect mid-run after a Bright Data session timeout.
+  const REMOTE_CONNECT_TIMEOUT_MS = Number(process.env.REMOTE_CONNECT_TIMEOUT_MS) || 120000;
+  const REMOTE_CONNECT_RETRIES = 3;
+  async function connectRemoteWithRetry(label) {
     let lastErr = null;
     for (let attempt = 1; attempt <= REMOTE_CONNECT_RETRIES; attempt++) {
       try {
-        console.log(`[runTests] Connecting to remote browser (attempt ${attempt}/${REMOTE_CONNECT_RETRIES}): ${options.endpoint.replace(/:[^:@]*@/, ':***@')}`);
+        console.log(`[${label}] Connecting to remote browser (attempt ${attempt}/${REMOTE_CONNECT_RETRIES}): ${options.endpoint.replace(/:[^:@]*@/, ':***@')}`);
         sendEvent({ type: 'browser-info', message: `Connecting to remote browser (attempt ${attempt}/${REMOTE_CONNECT_RETRIES})...` });
-        browser = await chromium.connectOverCDP(options.endpoint, { timeout: REMOTE_CONNECT_TIMEOUT_MS });
-        lastErr = null;
-        break;
+        const b = await chromium.connectOverCDP(options.endpoint, { timeout: REMOTE_CONNECT_TIMEOUT_MS });
+        b.__isRemoteBrowser = true;
+        return b;
       } catch (err) {
         lastErr = err;
-        console.warn(`[runTests] connectOverCDP attempt ${attempt} failed: ${err.message}`);
+        console.warn(`[${label}] connectOverCDP attempt ${attempt} failed: ${err.message}`);
         sendEvent({ type: 'browser-info', message: `Remote browser connect failed (attempt ${attempt}): ${err.message.substring(0, 120)}` });
         if (attempt < REMOTE_CONNECT_RETRIES) {
           const backoffMs = 2000 * attempt; // 2s, 4s
@@ -5306,16 +5391,19 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
         }
       }
     }
-    if (!browser) {
-      const msg = `Remote browser unavailable after ${REMOTE_CONNECT_RETRIES} attempts: ${lastErr ? lastErr.message : 'unknown error'}. Check Bright Data dashboard for quota/session limits, or set REMOTE_BROWSER_ENABLED=0 to fall back to local Chromium.`;
-      sendEvent({ type: 'error', message: msg });
-      throw new Error(msg);
+    throw new Error(`Remote browser unavailable after ${REMOTE_CONNECT_RETRIES} attempts: ${lastErr ? lastErr.message : 'unknown error'}. Check Bright Data dashboard for quota/session limits.`);
+  }
+
+  if (options.endpoint) {
+    // CDP connection (Browserless, Bright Data Scraping Browser, etc.)
+    // — same protocol the worker uses, so a single BROWSER_WS_URL env
+    // var works for both code paths.
+    try {
+      browser = await connectRemoteWithRetry('runTests');
+    } catch (err) {
+      sendEvent({ type: 'error', message: err.message });
+      throw err;
     }
-    // Tag the remote browser so `runStoreTests` can detect remote mode
-    // even when env vars aren't visible / the helper is called from a
-    // worker that didn't set them. Safe no-op on the local-launch and
-    // persistent-context paths below (we never tag those).
-    browser.__isRemoteBrowser = true;
     sendEvent({ type: 'browser-info', message: `Connected to remote browser: ${options.endpoint.replace(/\?.*$/, '')}` });
   } else if (options.persistent) {
     const dataDir = options.userDataDir || path.join(DATA_DIR, '.browser-data');
@@ -5344,12 +5432,18 @@ async function runTests(stores, testIds, sendEvent, options = {}) {
   const queue = [...stores];
   const running = new Set();
 
+  // Pass a reconnect callback into every remote-mode runStoreTests so
+  // it can recover from Bright Data session timeouts mid-run without
+  // killing the whole run.
+  const storeOpts = { sharedContext: !!sharedContext };
+  if (options.endpoint) storeOpts.reconnect = () => connectRemoteWithRetry('runStoreTests-reconnect');
+
   await new Promise((resolve) => {
     function startNext() {
       while (running.size < effectiveConcurrency && queue.length > 0) {
         const store = queue.shift();
         const target = sharedContext || browser;
-        const promise = runStoreTests(target, store, testIds, sendEvent, { sharedContext: !!sharedContext })
+        const promise = runStoreTests(target, store, testIds, sendEvent, storeOpts)
           .catch(err => sendEvent({ type: 'error', message: `Store ${store.newStore} failed: ${err.message}` }))
           .finally(() => {
             running.delete(promise);
