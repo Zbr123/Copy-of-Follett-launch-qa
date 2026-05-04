@@ -1493,126 +1493,214 @@
       qb.innerHTML = '';
 
       const tests = Array.from(selectedTests);
+
+      // Reset the per-run UI/finalization state. Defined as named
+      // helpers so the EventSource handlers below can reach them.
+      const finalizeUI = () => {
+        btn.disabled = false;
+        btn.classList.remove('running');
+        document.getElementById('progressFill').style.width = '100%';
+        document.getElementById('resultsSubtitle').textContent =
+          failedTests === 0 ? 'All tests passed.' : `${failedTests} test${failedTests === 1 ? '' : 's'} need attention.`;
+        document.getElementById('reminderBar').classList.add('show');
+        document.getElementById('exportBar').classList.add('show');
+      };
+
+      const handleEvent = (data) => {
+        switch (data.type) {
+          case 'run-start': {
+            // Show queue status so users know if they're waiting behind
+            // other runs. The server sends queue={ othersWaiting, inFlight, workers }.
+            const q = data.queue || {};
+            const workers = q.workers || 0;
+            const ahead = q.othersWaiting || 0;
+            const inFlight = q.inFlight || 0;
+            const banner = document.getElementById('queueBanner');
+            if (workers === 0) {
+              banner.innerHTML = `<span class="qb-pill">Warning</span><span class="qb-title">No workers online</span><span class="qb-dim">Jobs will queue until a worker comes up.</span>`;
+              banner.classList.add('show');
+            } else if (ahead > 0) {
+              banner.innerHTML = `<span class="qb-pill">Queued</span><span class="qb-title">${ahead} store${ahead === 1 ? '' : 's'} ahead of you</span><span class="qb-dim">${inFlight} running · ${workers} worker${workers === 1 ? '' : 's'} online — your tests will start as capacity frees up.</span>`;
+              banner.classList.add('show');
+            } else {
+              banner.innerHTML = `<span class="qb-pill">Ready</span><span class="qb-title">Starting now</span><span class="qb-dim">${workers} worker${workers === 1 ? '' : 's'} online · ${inFlight} other store${inFlight === 1 ? '' : 's'} in flight.</span>`;
+              banner.classList.add('show');
+              // Auto-dismiss the "ready" variant after 6s so it doesn't
+              // clutter the results view.
+              setTimeout(() => banner.classList.remove('show'), 6000);
+            }
+            break;
+          }
+          case 'store-start': getOrCreateResultCard(data.store); break;
+          case 'test-start': getOrCreateTestRow(data.store, data.testId, data.testName); break;
+          case 'test-progress': {
+            const tr = getOrCreateTestRow(data.store, data.testId, data.testId);
+            if (data.step) {
+              const s = document.createElement('div');
+              s.className = 'step';
+              s.textContent = data.step;
+              tr.stepsEl.appendChild(s);
+              tr.steps.push(data.step);
+            }
+            if (data.screenshot) {
+              const thumb = document.createElement('div');
+              thumb.className = 'sc-thumb';
+              thumb.innerHTML = `<img src="${data.screenshot}" loading="lazy" /><div class="sc-label">${data.label || 'Screenshot'}</div>`;
+              thumb.onclick = () => {
+                document.getElementById('lightboxImg').src = data.screenshot;
+                document.getElementById('lightbox').classList.add('show');
+              };
+              tr.screenshotsEl.appendChild(thumb);
+              tr.screenshots.push({ src: data.screenshot, label: data.label || '' });
+            }
+            break;
+          }
+          case 'test-result': {
+            const tr = getOrCreateTestRow(data.store, data.testId, data.testId);
+            const s = data.passed ? 'pass' : 'fail';
+            tr.dot.className = 'tr-dot ' + s;
+            tr.badge.className = 'tr-badge ' + s;
+            tr.badge.textContent = data.passed ? 'Passed' : 'Failed';
+            tr.durationEl.textContent = data.durationSec != null ? `${data.durationSec}s` : '';
+            const extraMsg = data.blockedUrl ? ` (${data.blockedUrl})` : '';
+            tr.msgEl.textContent = data.durationSec != null
+              ? `[${data.durationSec}s] ${data.message}${extraMsg}`
+              : `${data.message}${extraMsg}`;
+            if (!data.passed) tr.el.classList.add('expanded');
+            totalTests++;
+            if (data.passed) { passedTests++; resultState[data.store].passCount++; }
+            else { failedTests++; resultState[data.store].failCount++; }
+            updateProgress();
+            allResults.push({
+              store: data.store, testId: data.testId,
+              testName: TESTS.find(t => t.id === data.testId)?.name || data.testId,
+              passed: data.passed, message: data.message,
+              durationMs: data.durationMs || null,
+              durationSec: data.durationSec || null,
+              blockedUrl: data.blockedUrl || null,
+              cloudflareBlocked: Boolean(data.cloudflareBlocked),
+              steps: tr.steps.slice(), screenshots: tr.screenshots.slice(),
+              checks: data.checks || [],
+            });
+            break;
+          }
+          case 'store-complete': {
+            const sr = resultState[data.store];
+            if (sr) {
+              sr.meta.textContent = data.durationSec != null
+                ? `${sr.passCount} passed, ${sr.failCount} failed in ${data.durationSec}s`
+                : `${sr.passCount} passed, ${sr.failCount} failed`;
+              const hasFails = sr.failCount > 0;
+              sr.statusDot.className = 'result-status ' + (hasFails ? 'fail' : 'pass');
+            }
+            break;
+          }
+          case 'complete': break;
+          case 'error': alert('Error: ' + data.message); break;
+        }
+      };
+
+      // Step 1 — submit. The server returns a runId immediately and
+      // kicks the actual run off in the background. We do NOT await
+      // the run on this fetch; long-lived POSTs are exactly what was
+      // breaking before.
+      let runId;
       try {
         const response = await fetch('/api/run-tests', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ stores, tests }),
         });
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop();
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const data = JSON.parse(line.slice(6));
-            switch (data.type) {
-              case 'run-start': {
-                // Show queue status so users know if they're waiting behind
-                // other runs. The server sends queue={ othersWaiting, inFlight, workers }.
-                const q = data.queue || {};
-                const workers = q.workers || 0;
-                const ahead = q.othersWaiting || 0;
-                const inFlight = q.inFlight || 0;
-                const banner = document.getElementById('queueBanner');
-                if (workers === 0) {
-                  banner.innerHTML = `<span class="qb-pill">Warning</span><span class="qb-title">No workers online</span><span class="qb-dim">Jobs will queue until a worker comes up.</span>`;
-                  banner.classList.add('show');
-                } else if (ahead > 0) {
-                  banner.innerHTML = `<span class="qb-pill">Queued</span><span class="qb-title">${ahead} store${ahead === 1 ? '' : 's'} ahead of you</span><span class="qb-dim">${inFlight} running · ${workers} worker${workers === 1 ? '' : 's'} online — your tests will start as capacity frees up.</span>`;
-                  banner.classList.add('show');
-                } else {
-                  banner.innerHTML = `<span class="qb-pill">Ready</span><span class="qb-title">Starting now</span><span class="qb-dim">${workers} worker${workers === 1 ? '' : 's'} online · ${inFlight} other store${inFlight === 1 ? '' : 's'} in flight.</span>`;
-                  banner.classList.add('show');
-                  // Auto-dismiss the "ready" variant after 6s so it doesn't
-                  // clutter the results view.
-                  setTimeout(() => banner.classList.remove('show'), 6000);
-                }
-                break;
-              }
-              case 'store-start': getOrCreateResultCard(data.store); break;
-              case 'test-start': getOrCreateTestRow(data.store, data.testId, data.testName); break;
-              case 'test-progress': {
-                const tr = getOrCreateTestRow(data.store, data.testId, data.testId);
-                if (data.step) {
-                  const s = document.createElement('div');
-                  s.className = 'step';
-                  s.textContent = data.step;
-                  tr.stepsEl.appendChild(s);
-                  tr.steps.push(data.step);
-                }
-                if (data.screenshot) {
-                  const thumb = document.createElement('div');
-                  thumb.className = 'sc-thumb';
-                  thumb.innerHTML = `<img src="${data.screenshot}" loading="lazy" /><div class="sc-label">${data.label || 'Screenshot'}</div>`;
-                  thumb.onclick = () => {
-                    document.getElementById('lightboxImg').src = data.screenshot;
-                    document.getElementById('lightbox').classList.add('show');
-                  };
-                  tr.screenshotsEl.appendChild(thumb);
-                  tr.screenshots.push({ src: data.screenshot, label: data.label || '' });
-                }
-                break;
-              }
-              case 'test-result': {
-                const tr = getOrCreateTestRow(data.store, data.testId, data.testId);
-                const s = data.passed ? 'pass' : 'fail';
-                tr.dot.className = 'tr-dot ' + s;
-                tr.badge.className = 'tr-badge ' + s;
-                tr.badge.textContent = data.passed ? 'Passed' : 'Failed';
-                tr.durationEl.textContent = data.durationSec != null ? `${data.durationSec}s` : '';
-                const extraMsg = data.blockedUrl ? ` (${data.blockedUrl})` : '';
-                tr.msgEl.textContent = data.durationSec != null
-                  ? `[${data.durationSec}s] ${data.message}${extraMsg}`
-                  : `${data.message}${extraMsg}`;
-                if (!data.passed) tr.el.classList.add('expanded');
-                totalTests++;
-                if (data.passed) { passedTests++; resultState[data.store].passCount++; }
-                else { failedTests++; resultState[data.store].failCount++; }
-                updateProgress();
-                allResults.push({
-                  store: data.store, testId: data.testId,
-                  testName: TESTS.find(t => t.id === data.testId)?.name || data.testId,
-                  passed: data.passed, message: data.message,
-                  durationMs: data.durationMs || null,
-                  durationSec: data.durationSec || null,
-                  blockedUrl: data.blockedUrl || null,
-                  cloudflareBlocked: Boolean(data.cloudflareBlocked),
-                  steps: tr.steps.slice(), screenshots: tr.screenshots.slice(),
-                  checks: data.checks || [],
-                });
-                break;
-              }
-              case 'store-complete': {
-                const sr = resultState[data.store];
-                if (sr) {
-                  sr.meta.textContent = data.durationSec != null
-                    ? `${sr.passCount} passed, ${sr.failCount} failed in ${data.durationSec}s`
-                    : `${sr.passCount} passed, ${sr.failCount} failed`;
-                  const hasFails = sr.failCount > 0;
-                  sr.statusDot.className = 'result-status ' + (hasFails ? 'fail' : 'pass');
-                }
-                break;
-              }
-              case 'complete': break;
-              case 'error': alert('Error: ' + data.message); break;
-            }
-          }
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => ({}));
+          throw new Error(errBody.error || `${response.status} ${response.statusText}`);
         }
-      } catch (err) { alert('Connection error: ' + err.message); }
+        const body = await response.json();
+        runId = body.runId;
+        if (!runId) throw new Error('Server did not return a runId');
+      } catch (err) {
+        alert('Failed to start run: ' + err.message);
+        btn.disabled = false;
+        btn.classList.remove('running');
+        return;
+      }
 
-      btn.disabled = false;
-      btn.classList.remove('running');
-      document.getElementById('progressFill').style.width = '100%';
-      document.getElementById('resultsSubtitle').textContent =
-        failedTests === 0 ? 'All tests passed.' : `${failedTests} test${failedTests === 1 ? '' : 's'} need attention.`;
-      document.getElementById('reminderBar').classList.add('show');
-      document.getElementById('exportBar').classList.add('show');
+      // Step 2 — open the live event stream. EventSource automatically
+      // reconnects on network drops and re-sends the last seen event id
+      // via `Last-Event-ID`, which the server uses to skip events we've
+      // already rendered. That's the whole point of this refactor: a
+      // dropped connection no longer kills the run.
+      let es = null;
+      let runFinished = false;
+      let consecutiveErrors = 0;
+      let reconnectNotice = null; // banner element shown while reconnecting
+
+      const closeStream = () => {
+        if (es) {
+          try { es.close(); } catch (_) {}
+          es = null;
+        }
+        if (reconnectNotice) {
+          reconnectNotice.remove();
+          reconnectNotice = null;
+        }
+      };
+
+      const showReconnectNotice = () => {
+        if (reconnectNotice) return;
+        const banner = document.getElementById('queueBanner');
+        reconnectNotice = document.createElement('div');
+        reconnectNotice.style.cssText = 'margin-top:8px;font-size:12px;opacity:0.7;';
+        reconnectNotice.textContent = 'Reconnecting to live stream…';
+        banner.parentElement.insertBefore(reconnectNotice, banner.nextSibling);
+      };
+
+      const clearReconnectNotice = () => {
+        if (reconnectNotice) {
+          reconnectNotice.remove();
+          reconnectNotice = null;
+        }
+      };
+
+      es = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
+
+      es.onopen = () => {
+        consecutiveErrors = 0;
+        clearReconnectNotice();
+      };
+
+      es.onmessage = (e) => {
+        let data;
+        try { data = JSON.parse(e.data); } catch (_) { return; }
+        if (data.type === 'complete' || data.type === 'error') {
+          runFinished = true;
+          if (data.type === 'error') handleEvent(data);
+          closeStream();
+          finalizeUI();
+          return;
+        }
+        handleEvent(data);
+      };
+
+      es.onerror = () => {
+        // Browser will auto-reconnect unless readyState === CLOSED.
+        // We surface a small "reconnecting" hint after the first failure
+        // so users don't think the page froze.
+        if (runFinished) {
+          closeStream();
+          return;
+        }
+        consecutiveErrors++;
+        if (es && es.readyState === EventSource.CLOSED) {
+          // Browser gave up. Tell the user the run may still be going
+          // server-side and they can revisit it from history.
+          alert('Lost connection to live stream after multiple retries. Tests may still be running on the server — check Run History to see results.');
+          closeStream();
+          finalizeUI();
+        } else if (consecutiveErrors === 1) {
+          showReconnectNotice();
+        }
+      };
     }
 
     /* ── Export CSV ── */

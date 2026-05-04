@@ -87,65 +87,44 @@ if (DATA_DIR !== __dirname) {
   migrate('sweeps');
 }
 
-// ── SSE endpoint for real-time test results ──
-// Flow:
-//   1. Create a runId and initial run record (stored as JSON on disk).
-//   2. Initialize per-run Redis counters (total, completed, failed).
-//   3. Enqueue one BullMQ job per store. Workers pick them up and
-//      publish progress events to `run:<runId>` in Redis.
-//   4. Subscribe to that Redis channel and forward each event to this
-//      SSE stream. Also update the on-disk JSON as `test-result`
-//      events arrive, so run history survives server restarts.
-//   5. When all stores have completed (success or failure), send a
-//      `complete` event and close the stream.
+// ── Test run lifecycle ────────────────────────────────────────────────
+// We split submission and streaming into two endpoints:
 //
-// Interactive dashboard runs use the simpler direct-run path again.
-// This matches the older behavior that was working for single-store
-// runs: the API process calls runTests() directly and streams results
-// over the same SSE connection.
-app.post('/api/run-tests', async (req, res) => {
-  const { stores, tests, concurrency } = req.body;
+//   POST /api/run-tests          → returns { runId } immediately and
+//                                   kicks off the actual run in the
+//                                   background. Every event the runner
+//                                   emits is published to a Redis
+//                                   pub/sub channel AND appended to a
+//                                   bounded list (lib/queue.js).
+//
+//   GET  /api/runs/:id/events    → SSE stream that replays the bounded
+//                                   list (with `Last-Event-ID` support
+//                                   for incremental replay) and then
+//                                   tails the live channel. EventSource
+//                                   in the browser auto-reconnects on
+//                                   any network blip and resumes from
+//                                   the last seen event id.
+//
+// Why this design exists:
+//   We used to keep a single long-lived HTTP POST stream open for the
+//   entire run (10+ minutes). That was fragile — Railway's edge proxy,
+//   browser tab going inactive, Wi-Fi switches, or even the API
+//   process getting redeployed mid-run all surfaced as
+//   "Connection error: network error" in the dashboard, with no way
+//   for the client to recover. Decoupling submission from streaming
+//   means the run keeps going regardless and the UI can resume from
+//   exactly where it left off.
 
-  if (!stores || !stores.length) {
-    return res.status(400).json({ error: 'No stores provided' });
-  }
-  if (!tests || !tests.length) {
-    return res.status(400).json({ error: 'No tests selected' });
-  }
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders();
-  res.write(`data: ${JSON.stringify({ type: 'connecting' })}\n\n`);
-
-  // Railway (and most reverse proxies) close HTTP connections that are idle
-  // for ~60s. Send an SSE comment every 25s so the pipe stays alive even
-  // when a slow test step emits no events for a long stretch.
-  const heartbeat = setInterval(() => {
-    try { res.write(': heartbeat\n\n'); } catch (_) {}
-  }, 25000);
-  req.on('close', () => clearInterval(heartbeat));
-
-  const runId = new Date().toISOString().replace(/[:.]/g, '-');
-  const runFile = path.join(RUNS_DIR, `${runId}.json`);
-  const runData = {
-    id: runId,
-    startedAt: new Date().toISOString(),
-    stores: stores.map(s => s.newStore),
-    tests,
-    concurrency: concurrency || 3,
-    results: [],
-    status: 'running',
-  };
-  fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
-
+async function executeRunInBackground(runId, runFile, runData, stores, tests, concurrency) {
+  const { publishEvent } = getQueueApi();
   const screenshotTracker = {};
 
+  // Wrap publishEvent in a Promise chain so events publish in order
+  // (they're all writes to the same Redis list — pipelining via a chain
+  // preserves arrival order and prevents `_seq` from getting out-of-line
+  // with display order if two publishes race).
+  let publishChain = Promise.resolve();
   const sendEvent = (data) => {
-    try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch (_) {}
-
     if (data.type === 'test-progress' && data.screenshot) {
       const key = `${data.store}|${data.testId}`;
       if (!screenshotTracker[key]) screenshotTracker[key] = [];
@@ -169,6 +148,16 @@ app.post('/api/run-tests', async (req, res) => {
       });
       try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
     }
+
+    publishChain = publishChain.then(async () => {
+      try {
+        await publishEvent(runId, data);
+      } catch (err) {
+        // Redis hiccup — log but don't kill the run. The on-disk
+        // run file still gets the final results.
+        console.warn(`[run ${runId}] publishEvent failed: ${err.message}`);
+      }
+    });
   };
 
   try {
@@ -188,14 +177,155 @@ app.post('/api/run-tests', async (req, res) => {
     try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
     sendEvent({ type: 'complete' });
   } catch (err) {
-    console.error('[api/run-tests] error:', err);
+    console.error(`[run ${runId}] error:`, err);
     runData.status = 'error';
     runData.error = err.message;
     try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
-    try { res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`); } catch (_) {}
+    sendEvent({ type: 'error', message: err.message });
   } finally {
+    // Drain the publish chain so the final `complete` / `error` event
+    // actually lands in Redis before this function returns. Without
+    // this, the SSE stream could never see the terminal event if Redis
+    // was momentarily slow.
+    try { await publishChain; } catch (_) {}
+  }
+}
+
+app.post('/api/run-tests', async (req, res) => {
+  const { stores, tests, concurrency } = req.body;
+
+  if (!stores || !stores.length) {
+    return res.status(400).json({ error: 'No stores provided' });
+  }
+  if (!tests || !tests.length) {
+    return res.status(400).json({ error: 'No tests selected' });
+  }
+
+  const runId = new Date().toISOString().replace(/[:.]/g, '-');
+  const runFile = path.join(RUNS_DIR, `${runId}.json`);
+  const runData = {
+    id: runId,
+    startedAt: new Date().toISOString(),
+    stores: stores.map(s => s.newStore),
+    tests,
+    concurrency: concurrency || 3,
+    results: [],
+    status: 'running',
+  };
+  fs.writeFileSync(runFile, JSON.stringify(runData, null, 2));
+
+  // Verify Redis is reachable BEFORE we tell the client the run started —
+  // if pub/sub isn't available the events endpoint can't deliver
+  // anything, and we'd rather fail fast than have the UI show
+  // "connecting..." forever.
+  try {
+    const { sharedRedis } = getQueueApi();
+    await Promise.race([
+      sharedRedis().ping(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Redis ping timeout')), 3000)),
+    ]);
+  } catch (err) {
+    runData.status = 'error';
+    runData.error = `Redis unavailable: ${err.message}`;
+    try { fs.writeFileSync(runFile, JSON.stringify(runData, null, 2)); } catch (_) {}
+    return res.status(503).json({ error: `Event broker unavailable: ${err.message}` });
+  }
+
+  res.json({ runId, totalStores: stores.length });
+
+  // setImmediate so the response actually flushes before we kick off
+  // the run — otherwise a synchronous publishEvent failure could race
+  // with res.json() in some Node versions.
+  setImmediate(() => {
+    executeRunInBackground(runId, runFile, runData, stores, tests, concurrency).catch((err) => {
+      console.error(`[run ${runId}] background runner crashed:`, err);
+    });
+  });
+});
+
+// ── SSE event stream for a run ────────────────────────────────────────
+// Replays the bounded Redis event list (filtered by `Last-Event-ID` if
+// the browser is reconnecting), then subscribes to live events. The
+// per-event `id:` field is the monotonic seq assigned by publishEvent;
+// EventSource sends it back as `Last-Event-ID` automatically on
+// reconnect, which lets the server skip events the client already
+// rendered.
+app.get('/api/runs/:runId/events', async (req, res) => {
+  const { runId } = req.params;
+
+  // EventSource sets `Last-Event-ID` on reconnect. Some proxies strip
+  // the header — also accept it as a query param for callers that need
+  // to drive replay manually.
+  const lastEventId = parseInt(
+    req.headers['last-event-id'] || req.query.lastEventId || '0',
+    10
+  ) || 0;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  let closed = false;
+  let unsubscribe = null;
+  let highestSeq = lastEventId;
+
+  // 15s heartbeat — well under any reasonable proxy idle timeout. Sent
+  // as an SSE comment so it's invisible to onmessage handlers.
+  const heartbeat = setInterval(() => {
+    if (closed) return;
+    try { res.write(': heartbeat\n\n'); } catch (_) {}
+  }, 15000);
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
     clearInterval(heartbeat);
+    if (unsubscribe) {
+      Promise.resolve(unsubscribe()).catch(() => {});
+    }
     try { res.end(); } catch (_) {}
+  };
+
+  req.on('close', cleanup);
+
+  const writeEvent = (event) => {
+    if (closed) return;
+    const ev = event || {};
+    const seq = Number(ev._seq) || 0;
+    if (seq && seq <= highestSeq) return; // already delivered to this client
+    if (seq) highestSeq = seq;
+    const { _seq, ...rest } = ev;
+    let writeOk = true;
+    try {
+      if (seq) res.write(`id: ${seq}\n`);
+      res.write(`data: ${JSON.stringify(rest)}\n\n`);
+    } catch (_) {
+      writeOk = false;
+    }
+    if (!writeOk) {
+      cleanup();
+      return;
+    }
+    if (rest.type === 'complete' || rest.type === 'error') {
+      // Give the browser a beat to flush the final event before we
+      // close the stream so it lands in onmessage rather than racing
+      // with the close callback.
+      setTimeout(cleanup, 100);
+    }
+  };
+
+  try {
+    res.write(`: connected lastEventId=${lastEventId}\n\n`);
+    const { subscribeToRun } = getQueueApi();
+    unsubscribe = await subscribeToRun(runId, writeEvent);
+  } catch (err) {
+    console.error(`[runEvents ${runId}] subscribe error:`, err);
+    try {
+      res.write(`data: ${JSON.stringify({ type: 'error', message: 'Event stream unavailable: ' + err.message })}\n\n`);
+    } catch (_) {}
+    cleanup();
   }
 });
 
