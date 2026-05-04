@@ -8,30 +8,94 @@
 
   /**
    * Detect if the current page is a Cloudflare challenge/verification page.
+   *
+   * Detection strategy: the previous version matched only English strings
+   * + a few CF-internal markers, which missed localized challenges (we
+   * caught a Spanish one in the wild: "Se debe verificar tu conexión
+   * antes de poder continuar"). Now we use three orthogonal signals so
+   * any one of them flagging is sufficient:
+   *
+   *   1. CF-internal markers (`cf-challenge`, `cf_chl_opt`, …) — these
+   *      ship in the page chrome of every challenge page regardless of
+   *      locale and are the most reliable signal.
+   *   2. Per-locale challenge-headline phrases — fallback for cases
+   *      where CF strips the internal markers (rare, but happens on
+   *      some "managed challenge" variants).
+   *   3. Body-vs-iframe heuristic — if the page body is essentially
+   *      empty AND it embeds an iframe from challenges.cloudflare.com,
+   *      it's a challenge page even if no string match fires.
+   *
+   * We DELIBERATELY do NOT match generic Turnstile script/iframe URLs
+   * (`cf-turnstile`, `turnstile/v0/api.js`) because Shopify embeds those
+   * on cart / checkout / filtered-collection pages for anti-fraud even
+   * when there is no active challenge. Matching them was the cause of
+   * the spurious "CF blocked" failures Bright Data was supposedly
+   * delivering — see the original ticket for context.
    */
   async function isCloudflareChallenge(page) {
-    // Narrow detector: matches only strings that appear on an actual CF
-    // interstitial / "challenge running" page, never on a successfully
-    // delivered Shopify page that happens to embed the Turnstile widget
-    // for anti-fraud (cart, checkout, login, filtered collections).
-    //
-    // Previously we also matched 'cf-turnstile' and 'turnstile/v0/api.js',
-    // but those ship in the static HTML of many non-challenge pages on
-    // CF-protected sites and caused false positives — Bright Data was
-    // delivering the real page, we were misreading it as a block, and
-    // the retry loop would give up after 2 attempts.
     try {
       const content = await page.content();
-      return (
-        content.includes('cf-challenge') ||
-        content.includes('cf_chl_opt') ||
-        content.includes('Just a moment') ||
-        content.includes('Verify you are human') ||
-        content.includes('needs to be verified before you can proceed') ||
-        content.includes('challenges.cloudflare.com') ||
-        content.includes('cf-please-wait') ||
-        content.includes('cf-spinner')
-      );
+
+      // 1. CF-internal markers — locale-independent.
+      const internalMarkers = [
+        'cf-challenge',
+        'cf_chl_opt',
+        'cf-please-wait',
+        'cf-spinner',
+        'cf-browser-verification',
+      ];
+      if (internalMarkers.some((m) => content.includes(m))) return true;
+
+      // 2. Per-locale challenge headlines. Keep this list focused on the
+      //    *full headline* of a challenge page — short fragments cause
+      //    false positives on legit pages mentioning "verify" etc.
+      const localizedHeadlines = [
+        // English
+        'Just a moment',
+        'Verify you are human',
+        'needs to be verified before you can proceed',
+        'Checking your browser before accessing',
+        'Please complete the security check to access',
+        // Spanish (seen on tcu.bkstr.com)
+        'Se debe verificar tu conexión antes de poder continuar',
+        'Verificando que eres un humano',
+        'Compruebe que es un humano',
+        // French
+        'Un instant',
+        'Vérifiez que vous êtes humain',
+        'doit être vérifié',
+        // German
+        'Einen Moment',
+        'Überprüfen Sie, ob Sie ein Mensch sind',
+        'muss überprüft werden',
+        // Portuguese
+        'Verifique se você é humano',
+        'precisa ser verificado',
+        // Italian
+        'Verifica che sei umano',
+        'deve essere verificato',
+      ];
+      if (localizedHeadlines.some((h) => content.includes(h))) return true;
+
+      // 3. Body-vs-iframe heuristic: a near-empty body that hosts a
+      //    challenges.cloudflare.com iframe is an interstitial. Avoids
+      //    false positives on Shopify pages that embed Turnstile inline
+      //    while serving real product content alongside it.
+      if (content.includes('challenges.cloudflare.com')) {
+        const bodyLooksLikeChallenge = await page.evaluate(() => {
+          const text = (document.body && document.body.innerText) || '';
+          // A real Shopify page always has lots of text (nav, headings,
+          // product titles). A challenge page has at most ~200 chars of
+          // verification copy.
+          if (text.length > 600) return false;
+          // The challenge iframe is the *only* meaningful element.
+          const iframes = Array.from(document.querySelectorAll('iframe'));
+          return iframes.some((f) => /challenges\.cloudflare\.com|turnstile/.test(f.src || ''));
+        }).catch(() => false);
+        if (bodyLooksLikeChallenge) return true;
+      }
+
+      return false;
     } catch {
       return false;
     }
@@ -4739,20 +4803,96 @@
 
     // Patch page.goto. Extracted into a reusable function so we can re-
     // apply it to a fresh page after `ensurePageAlive()` reconnects.
-    //   • Remote mode (Bright Data / managed browser): trust the provider
-    //     to solve CF server-side. Our DOM-based detector false-positives
-    //     on pages that embed Turnstile as an anti-fraud widget (cart,
-    //     checkout, filtered collections, login) because the script tags
-    //     and iframe hosts ship in the static HTML even when there is no
-    //     active challenge. Running the retry loop on top of a working
-    //     provider only adds latency and spurious failures.
+    //   • Remote mode (Bright Data / managed browser): give the provider
+    //     a chance to solve CF server-side, but don't blindly trust it —
+    //     we've caught localized CF interstitials slipping through (see
+    //     `isCloudflareChallenge`). Strategy: detect, then *wait for
+    //     auto-resolve* (the unlocker usually clears within 3–7s of the
+    //     page rendering), and only re-navigate as a last resort. We
+    //     keep the cf_clearance cookie that Bright Data may have earned
+    //     by reusing the provider's default context, so subsequent
+    //     navigations to the same domain are usually CF-free.
     //   • Local mode: keep the full retry loop — local Chromium has no
     //     server-side unlocker, so we have to detect and retry ourselves.
     function applyGotoPatch(p) {
       const originalGoto = p.goto.bind(p);
       if (isRemoteBrowser) {
+        const REMOTE_MAX_CF_RETRIES = 2;
+        const REMOTE_AUTO_RESOLVE_MS = 9000; // Bright Data unlocker budget
         p.goto = async function (url, options = {}) {
-          return originalGoto(url, { ...options, timeout: 120000 });
+          const urlString = typeof url === 'string' ? url : String(url);
+          const navOptions = { ...options, timeout: options.timeout || 120000 };
+          let response = await originalGoto(url, navOptions);
+
+          // Fast path: not a challenge → return immediately, no extra
+          // delay. The vast majority of remote navigations land here.
+          if (!(await isCloudflareChallenge(p))) return response;
+
+          // Slow path: caught a challenge. Try to wait it out, then
+          // (if needed) re-navigate. Bounded total budget so a truly
+          // blocked page fails fast (~30s) instead of grinding for
+          // minutes against an unsolvable challenge.
+          for (let attempt = 1; attempt <= REMOTE_MAX_CF_RETRIES; attempt++) {
+            emitActiveProgress(`Cloudflare challenge detected — waiting for unlocker (attempt ${attempt}/${REMOTE_MAX_CF_RETRIES})`, {
+              url: urlString,
+              challenge: true,
+            });
+
+            // Step 1: wait for auto-resolve. We poll the detector every
+            // 750ms rather than using waitForFunction so we can leverage
+            // the same logic the rest of the pipeline trusts.
+            const deadline = Date.now() + REMOTE_AUTO_RESOLVE_MS;
+            while (Date.now() < deadline) {
+              await p.waitForTimeout(750);
+              if (!(await isCloudflareChallenge(p))) {
+                emitActiveProgress('Cloudflare challenge cleared by unlocker.', {
+                  url: urlString,
+                  challenge: true,
+                });
+                return response;
+              }
+            }
+
+            // Step 2: try clicking the Turnstile checkbox. Bright Data
+            // generally handles this server-side, but on some sites the
+            // challenge waits for a user gesture before completing.
+            const solved = await trySolveTurnstile(p, 4000);
+            if (solved) {
+              emitActiveProgress('Cloudflare challenge solved via Turnstile click.', {
+                url: urlString,
+                challenge: true,
+              });
+              await p.waitForTimeout(500);
+              return response;
+            }
+
+            // Step 3: re-navigate. Don't burn a retry on the last
+            // iteration — we'd just be re-checking the same page.
+            if (attempt < REMOTE_MAX_CF_RETRIES) {
+              emitActiveProgress(`Challenge persisted — re-navigating (attempt ${attempt + 1}/${REMOTE_MAX_CF_RETRIES})`, {
+                url: urlString,
+                challenge: true,
+              });
+              try {
+                response = await originalGoto(url, navOptions);
+              } catch (navErr) {
+                // Re-nav can throw on slow CF challenges; treat as
+                // "still blocked" and let the next iteration handle it.
+                emitActiveProgress(`Re-navigation error: ${navErr.message.substring(0, 120)}`, {
+                  url: urlString,
+                  challenge: true,
+                });
+              }
+            }
+          }
+
+          if (await isCloudflareChallenge(p)) {
+            const err = new Error(`Cloudflare blocked navigation to ${urlString} after ${REMOTE_MAX_CF_RETRIES} unlocker attempts`);
+            err.cloudflareBlocked = true;
+            err.blockedUrl = urlString;
+            throw err;
+          }
+          return response;
         };
         return;
       }
