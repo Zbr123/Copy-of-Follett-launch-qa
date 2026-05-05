@@ -81,7 +81,7 @@ const { scanStore } = require('./accessibility-scanner');
 
 chromiumExtra.use(StealthPlugin());
 
-const WORKER_CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 3);
+const WORKER_CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 4);
 
 // Screenshots are captured & base64-encoded inside test-runner.js
 // via a monkey-patched page.screenshot — events arrive here already

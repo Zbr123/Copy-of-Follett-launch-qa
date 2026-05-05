@@ -46,7 +46,7 @@ const BROWSER_OPTIONS = {
 };
 
 // Max concurrent stores — each gets its own Bright Data browser session.
-const MAX_CONCURRENT = parseInt(process.env.WORKER_CONCURRENCY || '5', 10);
+const MAX_CONCURRENT = parseInt(process.env.WORKER_CONCURRENCY || '4', 10);
 
 let state = { sweeps: [] };
 let activeCount = 0;     // how many items are currently processing

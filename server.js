@@ -167,7 +167,7 @@ async function executeRunInBackground(runId, runFile, runData, stores, tests, co
       totalStores: stores.length,
       queue: { othersWaiting: 0, inFlight: 0, workers: 1 },
     });
-    const runOpts = { concurrency: concurrency || 3 };
+    const runOpts = { concurrency: concurrency || 4 };
     if (REMOTE_BROWSER_ENABLED && process.env.BROWSER_WS_URL) {
       runOpts.endpoint = process.env.BROWSER_WS_URL;
     }
@@ -208,7 +208,7 @@ app.post('/api/run-tests', async (req, res) => {
     startedAt: new Date().toISOString(),
     stores: stores.map(s => s.newStore),
     tests,
-    concurrency: concurrency || 3,
+    concurrency: concurrency || 4,
     results: [],
     status: 'running',
   };
@@ -697,7 +697,7 @@ app.post('/api/schedule-run', (req, res) => {
     id: scheduleId,
     stores,
     tests,
-    concurrency: concurrency || 3,
+    concurrency: concurrency || 4,
     scheduledFor: runTime.toISOString(),
     status: 'scheduled',
     runId: null,
