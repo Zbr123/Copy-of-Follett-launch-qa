@@ -4700,7 +4700,7 @@
     // existing test timing.
     if (isRemoteBrowser) {
       page.setDefaultNavigationTimeout(120000);
-      page.setDefaultTimeout(120000);
+      page.setDefaultTimeout(90000);
     }
 
     // Hoisted above `ensurePageAlive` so it's definitely initialised
@@ -4709,55 +4709,41 @@
     let activeTestId = '';
     let activeTestName = '';
 
-  // ── Session recovery: reconnect to Bright Data if the session dies ──
-  // Returns true on success, false if reconnection is impossible (non-
-  // remote mode, no reconnect callback available, or max attempts hit).
-  const reconnectFn = opts.reconnect; // () => Promise<Browser> — provided by runTests in remote mode
+  // ── Improved Session Recovery ──
+  const reconnectFn = opts.reconnect;
   async function ensurePageAlive() {
-    // Quick connectivity probe — cheaper than page.isClosed() alone
-    // because isClosed() only checks the Playwright-side handle, not
-    // whether the underlying CDP WebSocket is still alive.
-    let sessionDead = false;
-
-    if (page && !page.isClosed()) {
-      try {
-        // Lightweight CDP call — if the session is dead this throws instantly
-        await page.evaluate(() => 1, { timeout: 5000 });
-      } catch (err) {
-        if (/Target|closed|destroyed|disconnected|WebSocket/i.test(err.message || '')) {
-          sessionDead = true;
-        }
-      }
-    } else {
-      sessionDead = true;
-    }
-
-    const browserAlive = browser &&
-      typeof browser.isConnected === 'function' &&
-      browser.isConnected();
-
-    if (!sessionDead && browserAlive) return true;
-
-    // We detected a dead session. Only remote mode can recover — local
-    // mode means the whole Chromium process died, which is unrecoverable
-    // here without re-entering runTests.
     if (!isRemoteBrowser || !reconnectFn) return false;
 
+    // Quick health check
+    let isAlive = false;
+    try {
+      if (page && !page.isClosed()) {
+        await page.evaluate(() => 1, { timeout: 8000 });
+        isAlive = true;
+      }
+    } catch (err) {
+      if (/Target|closed|destroyed|disconnected|WebSocket|Session/i.test(err.message || '')) {
+        isAlive = false;
+      } else {
+        // Unexpected error - don't treat as dead session
+        console.warn('[ensurePageAlive] Unexpected error:', err.message);
+      }
+    }
+
+    if (isAlive) return true;
+
+    // Session is dead → reconnect
     sendEvent({
       type: 'test-progress',
       store: store.newStore,
       testId: activeTestId,
-      step: '⚠ Browser session died — reconnecting to Bright Data...',
+      step: '⚠️ Bright Data session died — reconnecting...',
     });
 
     try {
-      // Close any stale handles (best-effort).
-      try { if (page && !page.isClosed()) await page.close(); } catch (_) {}
-      try {
-        if (browser && browser.isConnected && browser.isConnected()) {
-          await browser.close();
-        }
-      } catch (_) {}
+      // Clean up old handles
+      if (page && !page.isClosed()) await page.close().catch(() => {});
+      if (browser && typeof browser.close === 'function') await browser.close().catch(() => {});
 
       const fresh = await reconnectFn();
       browser = fresh;
@@ -4769,14 +4755,14 @@
 
       page = wrapPageForCapture(await context.newPage());
       page.setDefaultNavigationTimeout(120000);
-      page.setDefaultTimeout(120000);
+      page.setDefaultTimeout(90000);
       applyGotoPatch(page);
 
       sendEvent({
         type: 'test-progress',
         store: store.newStore,
         testId: activeTestId,
-        step: '✓ Reconnected to Bright Data — resuming tests',
+        step: '✓ Reconnected successfully — continuing',
       });
       return true;
     } catch (err) {
@@ -4784,7 +4770,7 @@
         type: 'test-progress',
         store: store.newStore,
         testId: activeTestId,
-        step: `✗ Reconnect failed: ${err.message.substring(0, 200)}`,
+        step: `✗ Reconnect failed: ${err.message.substring(0, 150)}`,
       });
       return false;
     }
@@ -4952,14 +4938,7 @@
     }
   applyGotoPatch(page);
 
-  // ── Keepalive: ping the session every 3 minutes in remote mode ──
-  // Bright Data closes the WebSocket after ~5 minutes of no CDP activity.
-  // Gaps between tests (e.g. a slow test finishing and the next one
-  // starting, or a quiet waitForTimeout stretch) can silently push past
-  // that idle window, leaving the next test to hit a dead socket. A
-  // 3-minute ping keeps the socket warm. If the ping itself throws, we
-  // swallow the error — ensurePageAlive will recover the session on the
-  // next test iteration.
+  // ── Keepalive: prevent session timeout during gaps ──
   let keepaliveInterval = null;
   if (isRemoteBrowser) {
     keepaliveInterval = setInterval(async () => {
@@ -4967,11 +4946,8 @@
         if (page && !page.isClosed()) {
           await page.evaluate(() => 1);
         }
-      } catch (_) {
-        // Session died — ensurePageAlive will handle recovery
-        // on the next test iteration
-      }
-    }, 3 * 60 * 1000); // every 3 minutes
+      } catch (_) {}
+    }, 45000); // every 45 seconds
   }
 
   let loginDone = false;
